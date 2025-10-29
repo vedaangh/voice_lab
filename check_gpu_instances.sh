@@ -276,7 +276,7 @@ if [[ "$SELECTED_INSTANCE" == p5.* ]]; then
     AMI_ID=$(aws ec2 describe-images \
         --region "$REGION" \
         --owners amazon \
-        --filters "Name=name,Values=Deep Learning OSS Nvidia Driver GPU AMI PyTorch 2.7 (Ubuntu 22.04)*" "Name=state,Values=available" \
+        --filters "Name=name,Values=Deep Learning OSS Nvidia Driver AMI GPU PyTorch * (Ubuntu 22.04)*" "Name=state,Values=available" \
         --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
         --output text)
     
