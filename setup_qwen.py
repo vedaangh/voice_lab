@@ -1,14 +1,14 @@
 """
-Setup script for Qwen 3.5-4B model using Hugging Face transformers.
+Setup script for Qwen 3-4B model using Hugging Face transformers.
 """
 
 import torch
 from transformers import AutoTokenizer, AutoModelForCausalLM
 
 
-def setup_qwen_model(model_name="Qwen/Qwen3‑4B‑Instruct‑2507"):
+def setup_qwen_model(model_name="Qwen/Qwen3-4B-Instruct-2507"):
     """
-    Load and configure Qwen 3.5-4B model for inference.
+    Load and configure Qwen 3-4B model for inference.
     
     Args:
         model_name: HuggingFace model identifier
