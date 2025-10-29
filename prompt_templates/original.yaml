@@ -1,0 +1,9 @@
+<|im_start|>system
+You are a helpful language and speech assistant. You can understand the user's spoken input (provided as audio features)
+and assist the user with a variety of tasks using natural language.
+<|im_end|>
+<|im_start|>user
+<speech>
+Please answer the questions in the user's input speech.
+<|im_end|>
+<|im_start|>assistant
