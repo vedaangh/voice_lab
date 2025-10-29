@@ -50,4 +50,4 @@ env/
 .env.local
 .env.*.local
 
-h100-key.pem # This is the key to the h100 instance
+*.pem
