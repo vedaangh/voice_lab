@@ -1,4 +1,5 @@
 import torch
+import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from datasets import load_dataset
 from transformers import WhisperProcessor
@@ -9,6 +10,7 @@ import os
 class S2SDataset(Dataset):
     """
     Dataset for InstructS2S-200K that loads and preprocesses audio.
+    Returns input audio mel-spectrogram and output text only.
     """
     def __init__(self, hf_dataset, processor, cache_dir):
         self.data = hf_dataset
@@ -22,48 +24,33 @@ class S2SDataset(Dataset):
         sample = self.data[idx]
         
         input_audio_path = os.path.join(self.cache_dir, sample['input_speech'])
-        output_audio_path = os.path.join(self.cache_dir, sample['output_speech'])
-        
         input_audio, _ = librosa.load(input_audio_path, sr=16000)
-        output_audio, _ = librosa.load(output_audio_path, sr=16000)
         
         input_features = self.processor(input_audio, sampling_rate=16000, return_tensors="pt").input_features.squeeze(0)
-        output_features = self.processor(output_audio, sampling_rate=16000, return_tensors="pt").input_features.squeeze(0)
+        
+        if input_features.shape[1] < 3000:
+            pad_amount = 3000 - input_features.shape[1]
+            input_features = F.pad(input_features, (0, pad_amount), value=0.0)
+        else:
+            input_features = input_features[:, :3000]
         
         return {
             'input_features': input_features,
-            'output_features': output_features,
-            'input_text': sample['input_text'],
-            'output_text': sample['output_text'],
-            'output_unit': sample['output_unit']
+            'output_text': sample['output_text']
         }
 
 
 def collate_fn(batch):
     """
-    Collate function to pad variable-length sequences.
+    Collate function for batching.
+    Audio is already padded to 3000 frames.
     """
-    input_features = [item['input_features'] for item in batch]
-    output_features = [item['output_features'] for item in batch]
-    
-    input_features = torch.nn.utils.rnn.pad_sequence(
-        [f.transpose(0, 1) for f in input_features],
-        batch_first=True,
-        padding_value=0.0
-    ).transpose(1, 2)
-    
-    output_features = torch.nn.utils.rnn.pad_sequence(
-        [f.transpose(0, 1) for f in output_features],
-        batch_first=True,
-        padding_value=0.0
-    ).transpose(1, 2)
+    input_features = torch.stack([item['input_features'] for item in batch])
+    output_texts = [item['output_text'] for item in batch]
     
     return {
         'input_features': input_features,
-        'output_features': output_features,
-        'input_text': [item['input_text'] for item in batch],
-        'output_text': [item['output_text'] for item in batch],
-        'output_unit': [item['output_unit'] for item in batch]
+        'output_text': output_texts
     }
 
 
@@ -138,6 +125,4 @@ if __name__ == "__main__":
     print("\nFetching first batch...")
     batch = next(iter(train_dataloader))
     print(f"Input features shape: {batch['input_features'].shape}")
-    print(f"Output features shape: {batch['output_features'].shape}")
-    print(f"Input text: {batch['input_text'][0][:100]}...")
     print(f"Output text: {batch['output_text'][0][:100]}...")
