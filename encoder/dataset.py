@@ -11,6 +11,10 @@ class S2SDataset(Dataset):
     """
     Dataset for InstructS2S-200K that loads and preprocesses audio.
     Returns input audio mel-spectrogram and output text only.
+    
+    Full dataset download: ~127GB (yuekai/InstructS2S-200K version with all audio)
+    Lite version: ~491MB (ICTNLP/InstructS2S-200K version)
+    Total samples: 200,000 conversation turns
     """
     def __init__(self, hf_dataset, processor, cache_dir):
         self.data = hf_dataset
@@ -54,7 +58,7 @@ def collate_fn(batch):
     }
 
 
-def get_dataloaders(batch_size=16, num_workers=4, val_split=0.05):
+def get_dataloaders(batch_size=16, num_workers=4, val_split=0.05, use_full_audio=True):
     """
     Create train and validation dataloaders with audio preprocessing.
     
@@ -62,11 +66,16 @@ def get_dataloaders(batch_size=16, num_workers=4, val_split=0.05):
         batch_size: Batch size for dataloaders
         num_workers: Number of workers for data loading
         val_split: Fraction of data to use for validation
+        use_full_audio: If True, downloads full dataset with audio (127GB from yuekai version)
+                       If False, uses ICTNLP version (491MB, may have limited audio)
     
     Returns:
         train_dataloader, val_dataloader
     """
-    dataset = load_dataset('ICTNLP/InstructS2S-200K', split='train')
+    if use_full_audio:
+        dataset = load_dataset('yuekai/InstructS2S-200K', split='train', trust_remote_code=True)
+    else:
+        dataset = load_dataset('ICTNLP/InstructS2S-200K', split='train')
     
     cache_dir = os.path.expanduser('~/.cache/huggingface/datasets')
     dataset_cache = os.path.join(cache_dir, 'downloads/extracted')

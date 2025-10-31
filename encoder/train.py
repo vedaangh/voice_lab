@@ -76,6 +76,8 @@ def main():
     batch_size = 4
     num_epochs = 10
     learning_rate = 1e-4
+    
+    # TODO: Increase batch_size or implement gradient accumulation for more stable training
     template_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompt_templates/original.yaml")
     checkpoint_dir = "checkpoints"
     
@@ -85,6 +87,7 @@ def main():
     
     model.qwen = model.qwen.to(dtype=torch.bfloat16)
     model.whisper_encoder = model.whisper_encoder.to(dtype=torch.bfloat16)
+    model.adapter = model.adapter.to(dtype=torch.bfloat16)
     
     print("Preparing template...")
     embed_layer = model.qwen.get_input_embeddings()
@@ -95,13 +98,15 @@ def main():
         device=device
     )
     
-    dummy_audio = torch.randn(1, 80, 3000).to(device)
+    dummy_audio = torch.randn(1, 128, 3000, dtype=torch.bfloat16, device=device)
     with torch.no_grad():
         dummy_output = model.whisper_encoder(dummy_audio)
     speech_len = dummy_output.last_hidden_state.shape[1]
     print(f"Speech sequence length: {speech_len}")
     
     optimizer = AdamW(model.adapter.parameters(), lr=learning_rate)
+    
+    # TODO: Add learning rate scheduler (e.g., cosine annealing with warmup) for better convergence
     
     print("Loading dataset...")
     train_dataloader, val_dataloader = get_dataloaders(batch_size=batch_size)
@@ -113,7 +118,7 @@ def main():
     for epoch in range(num_epochs):
         print(f"\nEpoch {epoch + 1}/{num_epochs}")
         
-        model.train()
+        model.eval()
         model.adapter.train()
         total_train_loss = 0
         
@@ -135,6 +140,10 @@ def main():
             
             optimizer.zero_grad()
             loss.backward()
+            
+            # TODO: Add gradient clipping to prevent exploding gradients
+            # torch.nn.utils.clip_grad_norm_(model.adapter.parameters(), max_norm=1.0)
+            
             optimizer.step()
             
             total_train_loss += loss.item()
@@ -142,7 +151,6 @@ def main():
         train_loss = total_train_loss / len(train_dataloader)
         
         model.eval()
-        model.adapter.eval()
         total_val_loss = 0
         
         with torch.no_grad():
