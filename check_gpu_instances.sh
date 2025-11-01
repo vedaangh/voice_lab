@@ -311,6 +311,20 @@ fi
 echo "Using AMI: $AMI_ID"
 echo ""
 
+read -p "Enter disk size in GB (default: 100): " DISK_SIZE
+
+if [ -z "$DISK_SIZE" ]; then
+    DISK_SIZE=100
+fi
+
+if ! [[ "$DISK_SIZE" =~ ^[0-9]+$ ]] || [ "$DISK_SIZE" -lt 8 ]; then
+    echo "Error: Invalid disk size. Must be at least 8 GB."
+    exit 1
+fi
+
+echo "Using disk size: ${DISK_SIZE} GB"
+echo ""
+
 echo "Launching instance..."
 RESULT=$(aws ec2 run-instances \
     --region "$REGION" \
@@ -318,7 +332,7 @@ RESULT=$(aws ec2 run-instances \
     --instance-type "$SELECTED_INSTANCE" \
     --key-name "$KEY_NAME" \
     --security-group-ids "$SECURITY_GROUP" \
-    --block-device-mappings 'DeviceName=/dev/sda1,Ebs={VolumeSize=100,VolumeType=gp3}' \
+    --block-device-mappings "DeviceName=/dev/sda1,Ebs={VolumeSize=${DISK_SIZE},VolumeType=gp3}" \
     --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value=GPU-Instance-${SG_TIMESTAMP}}]" \
     --output json)
 
