@@ -3,23 +3,21 @@ import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 from datasets import load_dataset
 from transformers import WhisperProcessor
-import librosa
+import torchaudio.functional as audio_F
 import os
 
 
 class S2SDataset(Dataset):
     """
-    Dataset for InstructS2S-200K that loads and preprocesses audio.
+    Dataset for InstructS2S-200K that loads and preprocesses audio using AudioDecoder.
     Returns input audio mel-spectrogram and output text only.
     
     Full dataset download: ~127GB (yuekai/InstructS2S-200K version with all audio)
-    Lite version: ~491MB (ICTNLP/InstructS2S-200K version)
     Total samples: 200,000 conversation turns
     """
-    def __init__(self, hf_dataset, processor, cache_dir):
+    def __init__(self, hf_dataset, processor):
         self.data = hf_dataset
         self.processor = processor
-        self.cache_dir = cache_dir
     
     def __len__(self):
         return len(self.data)
@@ -27,8 +25,20 @@ class S2SDataset(Dataset):
     def __getitem__(self, idx):
         sample = self.data[idx]
         
-        input_audio_path = os.path.join(self.cache_dir, sample['input_speech'])
-        input_audio, _ = librosa.load(input_audio_path, sr=16000)
+        audio_decoder = sample['input_speech']
+        
+        audio_tensor = audio_decoder.get_frames_at(0, audio_decoder.metadata.num_frames)
+        native_sr = audio_decoder.metadata.sample_rate
+        
+        if native_sr != 16000:
+            audio_tensor = audio_tensor.transpose(0, 1)
+            audio_tensor = audio_F.resample(audio_tensor, native_sr, 16000)
+            audio_tensor = audio_tensor.transpose(0, 1)
+        
+        if audio_tensor.shape[1] > 1:
+            audio_tensor = audio_tensor.mean(dim=1)
+        
+        input_audio = audio_tensor.squeeze().numpy()
         
         input_features = self.processor(input_audio, sampling_rate=16000, return_tensors="pt").input_features.squeeze(0)
         
@@ -79,27 +89,31 @@ def get_dataloaders(batch_size=16, num_workers=4, val_split=0.05, use_full_audio
     
     dataset = dataset.filter(lambda x: x == 1, input_columns=['round'])
     
-    cache_dir = os.path.expanduser('~/.cache/huggingface/datasets')
-    dataset_cache = os.path.join(cache_dir, 'downloads/extracted')
-    
-    for root, dirs, files in os.walk(cache_dir):
-        if 'instruct_en_0-1-user.wav' in files:
-            dataset_cache = root.split('/wav/')[0]
-            break
+    split_dataset = dataset.train_test_split(test_size=val_split, seed=42)
     
     def extract_first_pair(example):
         return {
-            'input_speech': example['question_audio']['path'],
+            'input_speech': example['question_audio'],
             'output_text': example['answer']
         }
     
-    dataset = dataset.map(extract_first_pair, remove_columns=['id', 'round', 'question', 'speech_token', 'question_audio'])
-    split_dataset = dataset.train_test_split(test_size=val_split, seed=42)
+    split_dataset['train'] = split_dataset['train'].map(
+        extract_first_pair, 
+        remove_columns=['id', 'round', 'question', 'speech_token', 'answer'],
+        num_proc=4,
+        desc="Processing train set"
+    )
+    split_dataset['test'] = split_dataset['test'].map(
+        extract_first_pair,
+        remove_columns=['id', 'round', 'question', 'speech_token', 'answer'],
+        num_proc=4,
+        desc="Processing val set"
+    )
     
     processor = WhisperProcessor.from_pretrained("openai/whisper-large-v3")
     
-    train_dataset = S2SDataset(split_dataset['train'], processor, dataset_cache)
-    val_dataset = S2SDataset(split_dataset['test'], processor, dataset_cache)
+    train_dataset = S2SDataset(split_dataset['train'], processor)
+    val_dataset = S2SDataset(split_dataset['test'], processor)
     
     train_dataloader = DataLoader(
         train_dataset,

@@ -271,19 +271,19 @@ echo ""
 
 echo "Getting latest Deep Learning AMI with PyTorch..."
 
-AMI_ID=$(aws ec2 describe-images \
-    --region "$REGION" \
-    --owners amazon \
-    --filters "Name=name,Values=Deep Learning OSS Nvidia Driver AMI GPU PyTorch * (Ubuntu 22.04)*" "Name=state,Values=available" \
-    --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
-    --output text)
-
-if [ -z "$AMI_ID" ] || [ "$AMI_ID" == "None" ]; then
-    echo "PyTorch AMI not found, trying base Deep Learning AMI..."
     AMI_ID=$(aws ec2 describe-images \
         --region "$REGION" \
         --owners amazon \
-        --filters "Name=name,Values=Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04)*" "Name=state,Values=available" \
+        --filters "Name=name,Values=Deep Learning OSS Nvidia Driver AMI GPU PyTorch * (Ubuntu 22.04)*" "Name=state,Values=available" \
+    --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
+        --output text)
+    
+    if [ -z "$AMI_ID" ] || [ "$AMI_ID" == "None" ]; then
+        echo "PyTorch AMI not found, trying base Deep Learning AMI..."
+        AMI_ID=$(aws ec2 describe-images \
+            --region "$REGION" \
+            --owners amazon \
+            --filters "Name=name,Values=Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04)*" "Name=state,Values=available" \
         --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
         --output text)
 fi
