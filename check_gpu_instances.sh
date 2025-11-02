@@ -269,31 +269,41 @@ aws ec2 authorize-security-group-ingress \
 echo "✓ SSH access allowed from your IP: $MY_IP"
 echo ""
 
-echo "Getting latest Deep Learning AMI with PyTorch..."
+echo "Getting latest Deep Learning AMI with PyTorch 2.8+ (Ubuntu 24.04)..."
 
+AMI_ID=$(aws ec2 describe-images \
+    --region "$REGION" \
+    --owners amazon \
+    --filters "Name=name,Values=Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.8* (Ubuntu 24.04)*" "Name=state,Values=available" \
+    --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
+    --output text)
+
+if [ -z "$AMI_ID" ] || [ "$AMI_ID" == "None" ]; then
+    echo "PyTorch 2.8 Ubuntu 24.04 AMI not found, trying Ubuntu 24.04 with any PyTorch version..."
     AMI_ID=$(aws ec2 describe-images \
         --region "$REGION" \
         --owners amazon \
-        --filters "Name=name,Values=Deep Learning OSS Nvidia Driver AMI GPU PyTorch * (Ubuntu 22.04)*" "Name=state,Values=available" \
-    --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
-        --output text)
-    
-    if [ -z "$AMI_ID" ] || [ "$AMI_ID" == "None" ]; then
-        echo "PyTorch AMI not found, trying base Deep Learning AMI..."
-        AMI_ID=$(aws ec2 describe-images \
-            --region "$REGION" \
-            --owners amazon \
-            --filters "Name=name,Values=Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04)*" "Name=state,Values=available" \
+        --filters "Name=name,Values=Deep Learning OSS Nvidia Driver AMI GPU PyTorch * (Ubuntu 24.04)*" "Name=state,Values=available" \
         --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
         --output text)
 fi
 
 if [ -z "$AMI_ID" ] || [ "$AMI_ID" == "None" ]; then
-    echo "Deep Learning AMI not found, using Amazon Linux 2023..."
+    echo "Ubuntu 24.04 AMI not found, trying PyTorch 2.8 on Amazon Linux 2023..."
     AMI_ID=$(aws ec2 describe-images \
         --region "$REGION" \
         --owners amazon \
-        --filters "Name=name,Values=al2023-ami-*-kernel-*-x86_64" "Name=state,Values=available" \
+        --filters "Name=name,Values=Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.8* (Amazon Linux 2023)*" "Name=state,Values=available" \
+        --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
+        --output text)
+fi
+
+if [ -z "$AMI_ID" ] || [ "$AMI_ID" == "None" ]; then
+    echo "PyTorch 2.8 AMI not found, falling back to latest PyTorch Ubuntu 22.04..."
+    AMI_ID=$(aws ec2 describe-images \
+        --region "$REGION" \
+        --owners amazon \
+        --filters "Name=name,Values=Deep Learning OSS Nvidia Driver AMI GPU PyTorch * (Ubuntu 22.04)*" "Name=state,Values=available" \
         --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
         --output text)
 fi
@@ -306,8 +316,12 @@ if [ -n "$AMI_NAME" ]; then
     echo "AMI Name: $AMI_NAME"
 fi
 echo ""
-echo "NOTE: For torchcodec AudioDecoder support, PyTorch 2.8+ is required."
-echo "      If using PyTorch 2.5.x, you'll need to modify dataset loading code."
+if [[ "$AMI_NAME" == *"PyTorch 2.8"* ]] || [[ "$AMI_NAME" == *"PyTorch 2.9"* ]] || [[ "$AMI_NAME" == *"PyTorch 3."* ]]; then
+    echo "✓ PyTorch 2.8+ detected - torchcodec AudioDecoder fully supported!"
+else
+    echo "⚠ WARNING: PyTorch 2.8+ not detected. torchcodec AudioDecoder may not work."
+    echo "           You may need to upgrade PyTorch or modify dataset loading code."
+fi
 echo ""
 
 AMI_ID="$AMI_ID_ONLY"
