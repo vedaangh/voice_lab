@@ -77,6 +77,8 @@ def get_dataloaders(batch_size=16, num_workers=4, val_split=0.05, use_full_audio
     else:
         dataset = load_dataset('ICTNLP/InstructS2S-200K', split='train')
     
+    dataset = dataset.filter(lambda x: x == 1, input_columns=['round'])
+    
     cache_dir = os.path.expanduser('~/.cache/huggingface/datasets')
     dataset_cache = os.path.join(cache_dir, 'downloads/extracted')
     
@@ -86,18 +88,12 @@ def get_dataloaders(batch_size=16, num_workers=4, val_split=0.05, use_full_audio
             break
     
     def extract_first_pair(example):
-        human_turn = example['conversation'][0]
-        gpt_turn = example['conversation'][1]
         return {
-            'input_speech': human_turn['speech'],
-            'input_text': human_turn['text'],
-            'input_unit': human_turn['unit'],
-            'output_speech': gpt_turn['speech'],
-            'output_text': gpt_turn['text'],
-            'output_unit': gpt_turn['unit']
+            'input_speech': example['question_audio']['path'],
+            'output_text': example['answer']
         }
     
-    dataset = dataset.map(extract_first_pair, remove_columns=['id', 'conversation'])
+    dataset = dataset.map(extract_first_pair, remove_columns=['id', 'round', 'question', 'speech_token', 'question_audio'])
     split_dataset = dataset.train_test_split(test_size=val_split, seed=42)
     
     processor = WhisperProcessor.from_pretrained("openai/whisper-large-v3")

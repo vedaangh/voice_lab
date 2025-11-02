@@ -269,32 +269,22 @@ aws ec2 authorize-security-group-ingress \
 echo "✓ SSH access allowed from your IP: $MY_IP"
 echo ""
 
-echo "Getting latest Deep Learning AMI..."
+echo "Getting latest Deep Learning AMI with PyTorch..."
 
-if [[ "$SELECTED_INSTANCE" == p5.* ]]; then
-    echo "P5 instance detected, using PyTorch AMI..."
-    AMI_ID=$(aws ec2 describe-images \
-        --region "$REGION" \
-        --owners amazon \
-        --filters "Name=name,Values=Deep Learning OSS Nvidia Driver AMI GPU PyTorch * (Ubuntu 22.04)*" "Name=state,Values=available" \
-        --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
-        --output text)
-    
-    if [ -z "$AMI_ID" ] || [ "$AMI_ID" == "None" ]; then
-        echo "PyTorch AMI not found, trying base Deep Learning AMI..."
-        AMI_ID=$(aws ec2 describe-images \
-            --region "$REGION" \
-            --owners amazon \
-            --filters "Name=name,Values=Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04)*" "Name=state,Values=available" \
-            --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
-            --output text)
-    fi
-else
+AMI_ID=$(aws ec2 describe-images \
+    --region "$REGION" \
+    --owners amazon \
+    --filters "Name=name,Values=Deep Learning OSS Nvidia Driver AMI GPU PyTorch * (Ubuntu 22.04)*" "Name=state,Values=available" \
+    --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
+    --output text)
+
+if [ -z "$AMI_ID" ] || [ "$AMI_ID" == "None" ]; then
+    echo "PyTorch AMI not found, trying base Deep Learning AMI..."
     AMI_ID=$(aws ec2 describe-images \
         --region "$REGION" \
         --owners amazon \
         --filters "Name=name,Values=Deep Learning Base OSS Nvidia Driver GPU AMI (Ubuntu 22.04)*" "Name=state,Values=available" \
-        --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
+        --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
         --output text)
 fi
 
@@ -304,12 +294,23 @@ if [ -z "$AMI_ID" ] || [ "$AMI_ID" == "None" ]; then
         --region "$REGION" \
         --owners amazon \
         --filters "Name=name,Values=al2023-ami-*-kernel-*-x86_64" "Name=state,Values=available" \
-        --query 'sort_by(Images, &CreationDate)[-1].ImageId' \
+        --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
         --output text)
 fi
 
-echo "Using AMI: $AMI_ID"
+AMI_ID_ONLY=$(echo "$AMI_ID" | awk '{print $1}')
+AMI_NAME=$(echo "$AMI_ID" | cut -f2-)
+
+echo "Using AMI: $AMI_ID_ONLY"
+if [ -n "$AMI_NAME" ]; then
+    echo "AMI Name: $AMI_NAME"
+fi
 echo ""
+echo "NOTE: For torchcodec AudioDecoder support, PyTorch 2.8+ is required."
+echo "      If using PyTorch 2.5.x, you'll need to modify dataset loading code."
+echo ""
+
+AMI_ID="$AMI_ID_ONLY"
 
 read -p "Enter disk size in GB (default: 100): " DISK_SIZE
 
