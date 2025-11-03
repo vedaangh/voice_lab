@@ -294,7 +294,7 @@ if [ -z "$AMI_ID" ] || [ "$AMI_ID" == "None" ]; then
         --region "$REGION" \
         --owners amazon \
         --filters "Name=name,Values=Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.8* (Amazon Linux 2023)*" "Name=state,Values=available" \
-        --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
+        --query 'sort_by(Images, &CeeationDate)[-1].[ImageId,Name]' \
         --output text)
 fi
 

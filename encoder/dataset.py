@@ -25,18 +25,17 @@ class S2SDataset(Dataset):
     def __getitem__(self, idx):
         sample = self.data[idx]
         
-        audio_decoder = sample['input_speech']
+        audio_decoder = sample['question_audio']
         
-        audio_tensor = audio_decoder.get_frames_at(0, audio_decoder.metadata.num_frames)
-        native_sr = audio_decoder.metadata.sample_rate
+        audio_samples = audio_decoder.get_all_samples()
+        audio_tensor = audio_samples.data
+        native_sr = audio_samples.sample_rate
         
         if native_sr != 16000:
-            audio_tensor = audio_tensor.transpose(0, 1)
             audio_tensor = audio_F.resample(audio_tensor, native_sr, 16000)
-            audio_tensor = audio_tensor.transpose(0, 1)
         
-        if audio_tensor.shape[1] > 1:
-            audio_tensor = audio_tensor.mean(dim=1)
+        if audio_tensor.shape[0] > 1:
+            audio_tensor = audio_tensor.mean(dim=0)
         
         input_audio = audio_tensor.squeeze().numpy()
         
@@ -50,7 +49,7 @@ class S2SDataset(Dataset):
         
         return {
             'input_features': input_features,
-            'output_text': sample['output_text']
+            'output_text': sample['answer']
         }
 
 
@@ -90,25 +89,6 @@ def get_dataloaders(batch_size=16, num_workers=4, val_split=0.05, use_full_audio
     dataset = dataset.filter(lambda x: x == 1, input_columns=['round'])
     
     split_dataset = dataset.train_test_split(test_size=val_split, seed=42)
-    
-    def extract_first_pair(example):
-        return {
-            'input_speech': example['question_audio'],
-            'output_text': example['answer']
-        }
-    
-    split_dataset['train'] = split_dataset['train'].map(
-        extract_first_pair, 
-        remove_columns=['id', 'round', 'question', 'speech_token', 'answer'],
-        num_proc=4,
-        desc="Processing train set"
-    )
-    split_dataset['test'] = split_dataset['test'].map(
-        extract_first_pair,
-        remove_columns=['id', 'round', 'question', 'speech_token', 'answer'],
-        num_proc=4,
-        desc="Processing val set"
-    )
     
     processor = WhisperProcessor.from_pretrained("openai/whisper-large-v3")
     
