@@ -1,99 +1,88 @@
 import torch
 import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
-from datasets import load_dataset
-from transformers import WhisperProcessor
-import torchaudio.functional as audio_F
 import os
 
 
 class S2SDataset(Dataset):
     """
-    Dataset for InstructS2S-200K that loads and preprocesses audio using AudioDecoder.
+    Dataset for InstructS2S-200K that loads preprocessed audio features from cache.
     Returns input audio mel-spectrogram and output text only.
     
-    Full dataset download: ~127GB (yuekai/InstructS2S-200K version with all audio)
-    Total samples: 200,000 conversation turns
+    Expects preprocessed cache created by preprocess.py.
     """
-    def __init__(self, hf_dataset, processor):
-        self.data = hf_dataset
+    def __init__(self, cache_dir, split='train', processor=None):
+        self.cache_dir = cache_dir
+        self.split = split
+        
+        metadata_path = os.path.join(cache_dir, 'metadata.pt')
+        metadata = torch.load(metadata_path)
+        
+        if split == 'train':
+            self.indices = metadata['train_indices']
+        else:
+            self.indices = metadata['val_indices']
+        
         self.processor = processor
     
     def __len__(self):
-        return len(self.data)
+        return len(self.indices)
     
     def __getitem__(self, idx):
-        sample = self.data[idx]
+        actual_idx = self.indices[idx]
+        cache_path = os.path.join(self.cache_dir, f'{self.split}_{actual_idx}.pt')
         
-        audio_decoder = sample['question_audio']
-        
-        audio_samples = audio_decoder.get_all_samples()
-        audio_tensor = audio_samples.data
-        native_sr = audio_samples.sample_rate
-        
-        if native_sr != 16000:
-            audio_tensor = audio_F.resample(audio_tensor, native_sr, 16000)
-        
-        if audio_tensor.shape[0] > 1:
-            audio_tensor = audio_tensor.mean(dim=0)
-        
-        input_audio = audio_tensor.squeeze().numpy()
-        
-        input_features = self.processor(input_audio, sampling_rate=16000, return_tensors="pt").input_features.squeeze(0)
-        
-        if input_features.shape[1] < 3000:
-            pad_amount = 3000 - input_features.shape[1]
-            input_features = F.pad(input_features, (0, pad_amount), value=0.0)
-        else:
-            input_features = input_features[:, :3000]
+        data = torch.load(cache_path)
         
         return {
-            'input_features': input_features,
-            'output_text': sample['answer']
+            'input_features': data['input_features'],
+            'output_text': data['output_text'],
+            'speech_length': data['speech_length']
         }
 
 
 def collate_fn(batch):
     """
-    Collate function for batching.
-    Audio is already padded to 3000 frames.
+    Collate function for batching with variable-length padding.
+    Pads audio features to longest in batch.
     """
-    input_features = torch.stack([item['input_features'] for item in batch])
+    input_features_list = [item['input_features'] for item in batch]
     output_texts = [item['output_text'] for item in batch]
+    speech_lengths = torch.tensor([item['speech_length'] for item in batch], dtype=torch.long)
+    
+    max_len = max(f.shape[1] for f in input_features_list)
+    padded_features = []
+    for features in input_features_list:
+        if features.shape[1] < max_len:
+            pad_amount = max_len - features.shape[1]
+            padded = F.pad(features, (0, pad_amount), value=0.0)
+        else:
+            padded = features
+        padded_features.append(padded)
+    
+    input_features = torch.stack(padded_features, dim=0)
     
     return {
         'input_features': input_features,
-        'output_text': output_texts
+        'output_text': output_texts,
+        'speech_lengths': speech_lengths
     }
 
 
-def get_dataloaders(batch_size=16, num_workers=4, val_split=0.05, use_full_audio=True):
+def get_dataloaders(batch_size=16, num_workers=4, cache_dir='data/preprocessed'):
     """
-    Create train and validation dataloaders with audio preprocessing.
+    Create train and validation dataloaders from preprocessed cache.
     
     Args:
         batch_size: Batch size for dataloaders
         num_workers: Number of workers for data loading
-        val_split: Fraction of data to use for validation
-        use_full_audio: If True, downloads full dataset with audio (127GB from yuekai version)
-                       If False, uses ICTNLP version (491MB, may have limited audio)
+        cache_dir: Directory containing preprocessed cache files
     
     Returns:
         train_dataloader, val_dataloader
     """
-    if use_full_audio:
-        dataset = load_dataset('yuekai/InstructS2S-200K', split='train', trust_remote_code=True)
-    else:
-        dataset = load_dataset('ICTNLP/InstructS2S-200K', split='train')
-    
-    dataset = dataset.filter(lambda x: x == 1, input_columns=['round'])
-    
-    split_dataset = dataset.train_test_split(test_size=val_split, seed=42)
-    
-    processor = WhisperProcessor.from_pretrained("openai/whisper-large-v3")
-    
-    train_dataset = S2SDataset(split_dataset['train'], processor)
-    val_dataset = S2SDataset(split_dataset['test'], processor)
+    train_dataset = S2SDataset(cache_dir, split='train')
+    val_dataset = S2SDataset(cache_dir, split='val')
     
     train_dataloader = DataLoader(
         train_dataset,
@@ -116,7 +105,7 @@ def get_dataloaders(batch_size=16, num_workers=4, val_split=0.05, use_full_audio
 
 if __name__ == "__main__":
     print("Loading dataloaders...")
-    train_dataloader, val_dataloader = get_dataloaders(batch_size=2)
+    train_dataloader, val_dataloader = get_dataloaders(batch_size=2, cache_dir='data/preprocessed')
     
     print(f"Train batches: {len(train_dataloader)}")
     print(f"Val batches: {len(val_dataloader)}")
@@ -124,4 +113,5 @@ if __name__ == "__main__":
     print("\nFetching first batch...")
     batch = next(iter(train_dataloader))
     print(f"Input features shape: {batch['input_features'].shape}")
+    print(f"Speech lengths: {batch['speech_lengths']}")
     print(f"Output text: {batch['output_text'][0][:100]}...")

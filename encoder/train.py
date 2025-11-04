@@ -14,6 +14,7 @@ def prepare_batch(batch, model, tokenizer, before_embeds, after_embeds,
                   before_len, after_len, device):
     """
     Prepare batch: process audio, tokenize text, combine embeddings.
+    Handles variable-length speech sequences.
     
     Returns:
         inputs_embeds: (batch, total_seq_len, hidden_dim)
@@ -21,13 +22,33 @@ def prepare_batch(batch, model, tokenizer, before_embeds, after_embeds,
         attention_mask: (batch, total_seq_len) - 1s for real tokens, 0s for padding
     """
     batch_size = len(batch['output_text'])
-    
     audio_features = batch['input_features'].to(device)
+    speech_lengths = batch['speech_lengths'].to(device)
     
     with torch.no_grad():
         speech_hidden = model.whisper_encoder(audio_features).last_hidden_state
     
     speech_embeds = model.adapter(speech_hidden)
+    
+    whisper_lengths = (speech_lengths + 1) // 2
+    adapter_lengths = whisper_lengths // 5
+    
+    speech_embeds_list = []
+    for i in range(batch_size):
+        actual_len = adapter_lengths[i].item()
+        speech_embeds_list.append(speech_embeds[i, :actual_len])
+    
+    max_speech_len = max(len(emb) for emb in speech_embeds_list)
+    padded_speech_embeds = []
+    for emb in speech_embeds_list:
+        if emb.shape[0] < max_speech_len:
+            pad_size = max_speech_len - emb.shape[0]
+            padded = F.pad(emb.unsqueeze(0), (0, 0, 0, pad_size), value=0.0).squeeze(0)
+        else:
+            padded = emb
+        padded_speech_embeds.append(padded)
+    
+    speech_embeds = torch.stack(padded_speech_embeds, dim=0)
     speech_len = speech_embeds.shape[1]
     
     response_tokens = tokenizer(
@@ -101,15 +122,19 @@ def main():
     dummy_audio = torch.randn(1, 128, 3000, dtype=torch.bfloat16, device=device)
     with torch.no_grad():
         dummy_output = model.whisper_encoder(dummy_audio)
-    speech_len = dummy_output.last_hidden_state.shape[1]
-    print(f"Speech sequence length: {speech_len}")
+        dummy_adapter_output = model.adapter(dummy_output.last_hidden_state)
+    speech_len = dummy_adapter_output.shape[1]
+    print(f"Speech sequence length after adapter: {speech_len}")
     
     optimizer = AdamW(model.adapter.parameters(), lr=learning_rate)
     
     # TODO: Add learning rate scheduler (e.g., cosine annealing with warmup) for better convergence
     
     print("Loading dataset...")
-    train_dataloader, val_dataloader = get_dataloaders(batch_size=batch_size)
+    train_dataloader, val_dataloader = get_dataloaders(
+        batch_size=batch_size,
+        cache_dir='data/preprocessed'
+    )
     
     os.makedirs(checkpoint_dir, exist_ok=True)
     

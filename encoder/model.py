@@ -29,7 +29,8 @@ class SpeechToTextModel(nn.Module):
         self.adapter = Adapter(
             input_dim=whisper_dim,
             hidden_dim=2048,
-            output_dim=qwen_dim
+            output_dim=qwen_dim,
+            ds_rate=5
         )
         
         self.qwen = qwen_temp
