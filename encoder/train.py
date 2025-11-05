@@ -1,11 +1,11 @@
 import torch
-import torch.nn.functional as F
 from torch.optim import AdamW
 from tqdm import tqdm
 import os
 
 from transformers import AutoTokenizer
-from dataset import get_dataloaders
+from data_loader import get_dataloaders
+from config import WHISPER_DTYPE, LLM_DTYPE
 from model import SpeechToTextModel
 from utils import prepare_template_embeddings
 
@@ -21,47 +21,38 @@ def prepare_batch(batch, model, tokenizer, before_embeds, after_embeds,
         labels: (batch, total_seq_len) - -100 for prompt/speech, token IDs for response
         attention_mask: (batch, total_seq_len) - 1s for real tokens, 0s for padding
     """
-    batch_size = len(batch['output_text'])
-    audio_features = batch['input_features'].to(device)
-    speech_lengths = batch['speech_lengths'].to(device)
-    
+    batch_size = len(batch['answer_input_ids'])
+    audio_features = batch['input_features'].to(device=device, dtype=WHISPER_DTYPE)
+
     with torch.no_grad():
         speech_hidden = model.whisper_encoder(audio_features).last_hidden_state
-    
+
     speech_embeds = model.adapter(speech_hidden)
-    
-    whisper_lengths = (speech_lengths + 1) // 2
-    adapter_lengths = whisper_lengths // 5
-    
-    speech_embeds_list = []
-    for i in range(batch_size):
-        actual_len = adapter_lengths[i].item()
-        speech_embeds_list.append(speech_embeds[i, :actual_len])
-    
-    max_speech_len = max(len(emb) for emb in speech_embeds_list)
-    padded_speech_embeds = []
-    for emb in speech_embeds_list:
-        if emb.shape[0] < max_speech_len:
-            pad_size = max_speech_len - emb.shape[0]
-            padded = F.pad(emb.unsqueeze(0), (0, 0, 0, pad_size), value=0.0).squeeze(0)
-        else:
-            padded = emb
-        padded_speech_embeds.append(padded)
-    
-    speech_embeds = torch.stack(padded_speech_embeds, dim=0)
     speech_len = speech_embeds.shape[1]
-    
-    response_tokens = tokenizer(
-        batch['output_text'],
-        return_tensors='pt',
-        padding=True,
-        add_special_tokens=False
-    ).to(device)
-    response_ids = response_tokens['input_ids']
-    response_mask = response_tokens['attention_mask']
+
+    speech_mask = torch.ones(batch_size, speech_len, dtype=torch.long, device=device)
+
+    answer_id_list = batch['answer_input_ids']
+    max_answer_len = max((ids.shape[0] for ids in answer_id_list), default=0)
+    pad_token_id = tokenizer.pad_token_id
+    if pad_token_id is None:
+        pad_token_id = tokenizer.eos_token_id
+    response_ids = torch.full(
+        (batch_size, max_answer_len),
+        pad_token_id,
+        dtype=torch.long,
+        device=device
+    )
+    response_mask = torch.zeros(batch_size, max_answer_len, dtype=torch.long, device=device)
+    for idx, ids in enumerate(answer_id_list):
+        if ids.numel() == 0:
+            continue
+        length = ids.shape[0]
+        response_ids[idx, :length] = ids.to(device)
+        response_mask[idx, :length] = 1
     
     embed_layer = model.qwen.get_input_embeddings()
-    response_embeds = embed_layer(response_ids)
+    response_embeds = embed_layer(response_ids).to(dtype=LLM_DTYPE)
     
     before_embeds_batch = before_embeds.unsqueeze(0).expand(batch_size, -1, -1)
     after_embeds_batch = after_embeds.unsqueeze(0).expand(batch_size, -1, -1)
@@ -80,9 +71,13 @@ def prepare_batch(batch, model, tokenizer, before_embeds, after_embeds,
         dtype=torch.long,
         device=device
     )
-    labels = torch.cat([prompt_labels, response_ids], dim=1)
+    response_labels = response_ids.clone()
+    response_labels[response_mask == 0] = -100
+    labels = torch.cat([prompt_labels, response_labels], dim=1)
     
-    prompt_mask = torch.ones(batch_size, prompt_len, dtype=torch.long, device=device)
+    before_mask = torch.ones(batch_size, before_len, dtype=torch.long, device=device)
+    after_mask = torch.ones(batch_size, after_len, dtype=torch.long, device=device)
+    prompt_mask = torch.cat([before_mask, speech_mask, after_mask], dim=1)
     attention_mask = torch.cat([prompt_mask, response_mask], dim=1)
     
     return {
@@ -106,9 +101,9 @@ def main():
     model = SpeechToTextModel().to(device)
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507")
     
-    model.qwen = model.qwen.to(dtype=torch.bfloat16)
-    model.whisper_encoder = model.whisper_encoder.to(dtype=torch.bfloat16)
-    model.adapter = model.adapter.to(dtype=torch.bfloat16)
+    model.qwen = model.qwen.to(dtype=LLM_DTYPE)
+    model.whisper_encoder = model.whisper_encoder.to(dtype=WHISPER_DTYPE)
+    model.adapter = model.adapter.to(dtype=LLM_DTYPE)
     
     print("Preparing template...")
     embed_layer = model.qwen.get_input_embeddings()
@@ -132,8 +127,12 @@ def main():
     
     print("Loading dataset...")
     train_dataloader, val_dataloader = get_dataloaders(
+        tokenizer=tokenizer,
         batch_size=batch_size,
-        cache_dir='data/preprocessed'
+        shuffle=True,
+        num_workers=16,
+        val_ratio=0.01,
+        seed=42,
     )
     
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -203,12 +202,11 @@ def main():
             best_val_loss = val_loss
             torch.save({
                 'epoch': epoch,
-                'adapter_state_dict': model.adapter.state_dict(),
-                'optimizer_state_dict': optimizer.state_dict(),
-                'val_loss': val_loss,
-                'before_len': before_len,
-                'after_len': after_len,
-                'speech_len': speech_len,
+            'adapter_state_dict': model.adapter.state_dict(),
+            'optimizer_state_dict': optimizer.state_dict(),
+            'val_loss': val_loss,
+            'before_len': before_len,
+            'after_len': after_len,
             }, os.path.join(checkpoint_dir, "best_adapter.pt"))
             print(f"Saved best adapter with val loss: {val_loss:.4f}")
         
