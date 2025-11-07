@@ -94,7 +94,7 @@ def prepare_batch(batch, model, tokenizer, before_embeds, after_embeds,
 def main():
     disable_tokenizer_parallelism()
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    batch_size = 8
+    batch_size = 4
     num_epochs = 10
     learning_rate = 1e-4
     
