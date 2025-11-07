@@ -3,11 +3,15 @@ from torch.optim import AdamW
 from tqdm import tqdm
 import os
 
-from transformers import AutoTokenizer
+from transformers import AutoTokenizer, get_cosine_schedule_with_warmup
 from data_loader import get_dataloaders
 from config import WHISPER_DTYPE, LLM_DTYPE
 from model import SpeechToTextModel
 from utils import prepare_template_embeddings
+
+
+def disable_tokenizer_parallelism():
+    os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
 
 def prepare_batch(batch, model, tokenizer, before_embeds, after_embeds,
@@ -88,8 +92,9 @@ def prepare_batch(batch, model, tokenizer, before_embeds, after_embeds,
 
 
 def main():
+    disable_tokenizer_parallelism()
     device = "cuda" if torch.cuda.is_available() else "cpu"
-    batch_size = 4
+    batch_size = 8
     num_epochs = 10
     learning_rate = 1e-4
     
@@ -100,6 +105,8 @@ def main():
     print("Loading models...")
     model = SpeechToTextModel().to(device)
     tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507")
+    if hasattr(model.qwen, "config"):
+        model.qwen.config.use_cache = False
     
     model.qwen = model.qwen.to(dtype=LLM_DTYPE)
     model.whisper_encoder = model.whisper_encoder.to(dtype=WHISPER_DTYPE)
@@ -123,8 +130,6 @@ def main():
     
     optimizer = AdamW(model.adapter.parameters(), lr=learning_rate)
     
-    # TODO: Add learning rate scheduler (e.g., cosine annealing with warmup) for better convergence
-    
     print("Loading dataset...")
     train_dataloader, val_dataloader = get_dataloaders(
         tokenizer=tokenizer,
@@ -133,6 +138,15 @@ def main():
         num_workers=16,
         val_ratio=0.01,
         seed=42,
+    )
+
+    num_training_steps = len(train_dataloader) * num_epochs
+    warmup_ratio = 0.05
+    num_warmup_steps = max(1, int(num_training_steps * warmup_ratio))
+    scheduler = get_cosine_schedule_with_warmup(
+        optimizer,
+        num_warmup_steps=num_warmup_steps,
+        num_training_steps=num_training_steps,
     )
     
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -169,6 +183,7 @@ def main():
             # torch.nn.utils.clip_grad_norm_(model.adapter.parameters(), max_norm=1.0)
             
             optimizer.step()
+            scheduler.step()
             
             total_train_loss += loss.item()
         
@@ -204,6 +219,7 @@ def main():
                 'epoch': epoch,
             'adapter_state_dict': model.adapter.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
+                'scheduler_state_dict': scheduler.state_dict(),
             'val_loss': val_loss,
             'before_len': before_len,
             'after_len': after_len,
@@ -214,6 +230,7 @@ def main():
             'epoch': epoch,
             'adapter_state_dict': model.adapter.state_dict(),
             'optimizer_state_dict': optimizer.state_dict(),
+            'scheduler_state_dict': scheduler.state_dict(),
             'val_loss': val_loss,
         }, os.path.join(checkpoint_dir, "last_adapter.pt"))
 

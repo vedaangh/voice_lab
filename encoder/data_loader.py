@@ -113,7 +113,7 @@ def get_dataloaders(
     )
     train_dataset, val_dataset = split_dataset(dataset, val_ratio=val_ratio, seed=seed)
 
-    processor = WhisperProcessor.from_pretrained("openai/whisper-base")
+    processor = WhisperProcessor.from_pretrained("openai/whisper-large-v3")
     collate_fn = make_collate_fn(processor=processor, tokenizer=tokenizer)
 
     train_loader = DataLoader(
