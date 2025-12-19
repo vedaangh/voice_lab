@@ -6,12 +6,14 @@ from transformers import WhisperProcessor
 
 try:
     from encoder.config import MAX_AUDIO_SAMPLES, TARGET_SAMPLE_RATE
-except ModuleNotFoundError:  # script executed from within encoder/
+except ModuleNotFoundError:
     from config import MAX_AUDIO_SAMPLES, TARGET_SAMPLE_RATE
+
+DATASET_NAME = "yuekai/InstructS2S-200K"
+NUM_WORKERS = 16
 
 
 def _pad_or_trim(audio: np.ndarray, target_length: int = MAX_AUDIO_SAMPLES) -> np.ndarray:
-    """Pad with zeros or trim the waveform to `target_length` samples."""
     audio_length = audio.shape[0]
     if audio_length >= target_length:
         return audio[:target_length]
@@ -20,17 +22,8 @@ def _pad_or_trim(audio: np.ndarray, target_length: int = MAX_AUDIO_SAMPLES) -> n
     return np.pad(audio, (0, padding), mode="constant", constant_values=0)
 
 
-def load_instruct_dataset(
-    dataset_name: str,
-    use_full_audio: bool = True,
-    filter_num_proc: int | None = None,
-):
-    """Load the InstructS2S dataset and keep only audio + answer columns for round 1."""
-    if use_full_audio:
-        dataset = load_dataset(dataset_name, split="train", trust_remote_code=True)
-    else:
-        dataset = load_dataset("ICTNLP/InstructS2S-200K", split="train")
-
+def load_instruct_dataset(filter_num_proc: int | None = None):
+    dataset = load_dataset(DATASET_NAME, split="train", trust_remote_code=True)
     dataset = dataset.cast_column("question_audio", Audio(sampling_rate=TARGET_SAMPLE_RATE))
 
     keep_columns = {"round", "question_audio", "answer"}
@@ -88,29 +81,17 @@ def make_collate_fn(processor: WhisperProcessor, tokenizer, max_audio_samples: i
 
 
 def split_dataset(dataset, val_ratio: float = 0.01, seed: int = 42):
-    """Split dataset into train and validation subsets."""
     split = dataset.train_test_split(test_size=val_ratio, seed=seed)
     return split["train"], split["test"]
 
 
 def get_dataloaders(
     tokenizer,
-    dataset_name: str = "yuekai/InstructS2S-200K",
     batch_size: int = 4,
-    use_full_audio: bool = True,
-    shuffle: bool = False,
-    num_workers: int = 0,
-    filter_num_proc: int | None = None,
     val_ratio: float = 0.01,
     seed: int = 42,
 ):
-    """Create train and validation DataLoaders with LLaMA-Omni-style audio padding."""
-
-    dataset = load_instruct_dataset(
-        dataset_name=dataset_name,
-        use_full_audio=use_full_audio,
-        filter_num_proc=filter_num_proc,
-    )
+    dataset = load_instruct_dataset()
     train_dataset, val_dataset = split_dataset(dataset, val_ratio=val_ratio, seed=seed)
 
     processor = WhisperProcessor.from_pretrained("openai/whisper-large-v3")
@@ -119,18 +100,16 @@ def get_dataloaders(
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
-        shuffle=shuffle,
-        num_workers=num_workers,
+        shuffle=True,
+        num_workers=NUM_WORKERS,
         collate_fn=collate_fn,
     )
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
-        num_workers=num_workers,
+        num_workers=NUM_WORKERS,
         collate_fn=collate_fn,
     )
 
     return train_loader, val_loader
-
-

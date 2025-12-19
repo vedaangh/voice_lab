@@ -98,9 +98,9 @@ def main():
     num_epochs = 10
     learning_rate = 1e-4
     
-    # TODO: Increase batch_size or implement gradient accumulation for more stable training
     template_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompt_templates/original.yaml")
     checkpoint_dir = "checkpoints"
+    resume_checkpoint = os.path.join(checkpoint_dir, "last_adapter.pt")
     
     print("Loading models...")
     model = SpeechToTextModel().to(device)
@@ -151,9 +151,20 @@ def main():
     
     os.makedirs(checkpoint_dir, exist_ok=True)
     
+    start_epoch = 0
     best_val_loss = float('inf')
     
-    for epoch in range(num_epochs):
+    if os.path.exists(resume_checkpoint):
+        print(f"Resuming from checkpoint: {resume_checkpoint}")
+        checkpoint = torch.load(resume_checkpoint, map_location=device)
+        model.adapter.load_state_dict(checkpoint['adapter_state_dict'])
+        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        start_epoch = checkpoint['epoch'] + 1
+        best_val_loss = checkpoint.get('val_loss', float('inf'))
+        print(f"Resumed from epoch {start_epoch}, val_loss: {best_val_loss:.4f}")
+    
+    for epoch in range(start_epoch, num_epochs):
         print(f"\nEpoch {epoch + 1}/{num_epochs}")
         
         model.eval()

@@ -4,3 +4,6 @@ datasets
 librosa
 soundfile
 torchcodec
+hydra-core
+omegaconf
+wandb
