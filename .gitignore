@@ -5,6 +5,7 @@ h100-key.pem
 # AWS
 .aws/
 aws_credentials
+h100_request_log.txt
 
 # Python
 __pycache__/
@@ -50,4 +51,11 @@ env/
 .env.local
 .env.*.local
 
-*.pem
+# Hydra outputs
+outputs/
+
+# WandB
+wandb/
+
+# Model checkpoints
+checkpoints/
