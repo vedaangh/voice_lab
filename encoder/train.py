@@ -1,13 +1,26 @@
+import os
+import random
+import numpy as np
 import torch
 from torch.optim import AdamW
 from tqdm import tqdm
-import os
+
+import hydra
+from omegaconf import DictConfig, OmegaConf
+import wandb
 
 from transformers import AutoTokenizer, get_cosine_schedule_with_warmup
 from data_loader import get_dataloaders
 from config import WHISPER_DTYPE, LLM_DTYPE
 from model import SpeechToTextModel
 from utils import prepare_template_embeddings
+
+
+def set_seed(seed: int):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
 
 def disable_tokenizer_parallelism():
@@ -91,20 +104,31 @@ def prepare_batch(batch, model, tokenizer, before_embeds, after_embeds,
     }
 
 
-def main():
+@hydra.main(version_base=None, config_path="../../configs", config_name="config")
+def main(cfg: DictConfig):
     disable_tokenizer_parallelism()
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    batch_size = 4
-    num_epochs = 10
-    learning_rate = 1e-4
+    set_seed(cfg.seed)
     
-    template_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "prompt_templates/original.yaml")
-    checkpoint_dir = "checkpoints"
+    original_cwd = hydra.utils.get_original_cwd()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    
+    checkpoint_dir = os.path.join(original_cwd, "checkpoints")
+    template_path = os.path.join(original_cwd, "prompt_templates/original.yaml")
     resume_checkpoint = os.path.join(checkpoint_dir, "last_adapter.pt")
     
+    wandb.init(
+        project=cfg.wandb_project,
+        config=OmegaConf.to_container(cfg, resolve=True),
+    )
+    
     print("Loading models...")
-    model = SpeechToTextModel().to(device)
-    tokenizer = AutoTokenizer.from_pretrained("Qwen/Qwen3-4B-Instruct-2507")
+    model = SpeechToTextModel(
+        whisper_model_name=cfg.whisper_name,
+        qwen_model_name=cfg.llm_name,
+        adapter_hidden_dim=cfg.adapter_hidden_dim,
+        adapter_ds_rate=cfg.adapter_ds_rate,
+    ).to(device)
+    tokenizer = AutoTokenizer.from_pretrained(cfg.llm_name)
     if hasattr(model.qwen, "config"):
         model.qwen.config.use_cache = False
     
@@ -128,21 +152,18 @@ def main():
     speech_len = dummy_adapter_output.shape[1]
     print(f"Speech sequence length after adapter: {speech_len}")
     
-    optimizer = AdamW(model.adapter.parameters(), lr=learning_rate)
+    optimizer = AdamW(model.adapter.parameters(), lr=cfg.learning_rate)
     
     print("Loading dataset...")
     train_dataloader, val_dataloader = get_dataloaders(
         tokenizer=tokenizer,
-        batch_size=batch_size,
-        shuffle=True,
-        num_workers=16,
-        val_ratio=0.01,
-        seed=42,
+        batch_size=cfg.batch_size,
+        val_ratio=cfg.val_ratio,
+        seed=cfg.seed,
     )
 
-    num_training_steps = len(train_dataloader) * num_epochs
-    warmup_ratio = 0.05
-    num_warmup_steps = max(1, int(num_training_steps * warmup_ratio))
+    num_training_steps = len(train_dataloader) * cfg.num_epochs
+    num_warmup_steps = max(1, int(num_training_steps * cfg.warmup_ratio))
     scheduler = get_cosine_schedule_with_warmup(
         optimizer,
         num_warmup_steps=num_warmup_steps,
@@ -164,8 +185,8 @@ def main():
         best_val_loss = checkpoint.get('val_loss', float('inf'))
         print(f"Resumed from epoch {start_epoch}, val_loss: {best_val_loss:.4f}")
     
-    for epoch in range(start_epoch, num_epochs):
-        print(f"\nEpoch {epoch + 1}/{num_epochs}")
+    for epoch in range(start_epoch, cfg.num_epochs):
+        print(f"\nEpoch {epoch + 1}/{cfg.num_epochs}")
         
         model.eval()
         model.adapter.train()
@@ -189,10 +210,7 @@ def main():
             
             optimizer.zero_grad()
             loss.backward()
-            
-            # TODO: Add gradient clipping to prevent exploding gradients
-            # torch.nn.utils.clip_grad_norm_(model.adapter.parameters(), max_norm=1.0)
-            
+            torch.nn.utils.clip_grad_norm_(model.adapter.parameters(), max_norm=cfg.gradient_clip)
             optimizer.step()
             scheduler.step()
             
@@ -224,16 +242,23 @@ def main():
         
         print(f"Train Loss: {train_loss:.4f} | Val Loss: {val_loss:.4f}")
         
+        wandb.log({
+            "train_loss": train_loss,
+            "val_loss": val_loss,
+            "learning_rate": scheduler.get_last_lr()[0],
+            "epoch": epoch,
+        })
+        
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             torch.save({
                 'epoch': epoch,
-            'adapter_state_dict': model.adapter.state_dict(),
-            'optimizer_state_dict': optimizer.state_dict(),
+                'adapter_state_dict': model.adapter.state_dict(),
+                'optimizer_state_dict': optimizer.state_dict(),
                 'scheduler_state_dict': scheduler.state_dict(),
-            'val_loss': val_loss,
-            'before_len': before_len,
-            'after_len': after_len,
+                'val_loss': val_loss,
+                'before_len': before_len,
+                'after_len': after_len,
             }, os.path.join(checkpoint_dir, "best_adapter.pt"))
             print(f"Saved best adapter with val loss: {val_loss:.4f}")
         
@@ -244,6 +269,8 @@ def main():
             'scheduler_state_dict': scheduler.state_dict(),
             'val_loss': val_loss,
         }, os.path.join(checkpoint_dir, "last_adapter.pt"))
+    
+    wandb.finish()
 
 
 if __name__ == "__main__":

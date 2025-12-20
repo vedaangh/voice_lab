@@ -8,8 +8,13 @@ class SpeechToTextModel(nn.Module):
     """
     Combined model: Whisper encoder (frozen) + Adapter (trainable) + Qwen (frozen).
     """
-    def __init__(self, whisper_model_name="openai/whisper-large-v3", 
-                 qwen_model_name="Qwen/Qwen3-4B-Instruct-2507"):
+    def __init__(
+        self,
+        whisper_model_name="openai/whisper-large-v3",
+        qwen_model_name="Qwen/Qwen3-4B-Instruct-2507",
+        adapter_hidden_dim=2048,
+        adapter_ds_rate=5,
+    ):
         super().__init__()
         
         from transformers import WhisperConfig
@@ -28,9 +33,9 @@ class SpeechToTextModel(nn.Module):
         
         self.adapter = Adapter(
             input_dim=whisper_dim,
-            hidden_dim=2048,
+            hidden_dim=adapter_hidden_dim,
             output_dim=qwen_dim,
-            ds_rate=5
+            ds_rate=adapter_ds_rate,
         )
         
         self.qwen = qwen_temp
@@ -40,8 +45,6 @@ class SpeechToTextModel(nn.Module):
     def forward(self, audio_features=None, inputs_embeds=None, 
                 attention_mask=None, labels=None):
         """
-        Forward pass.
-        
         Training mode: inputs_embeds provided, forward through Qwen
         Inference mode: audio_features provided, return speech embeddings
         """
