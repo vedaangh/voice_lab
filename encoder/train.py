@@ -164,7 +164,6 @@ def main(cfg: DictConfig):
         batch_size=cfg.batch_size,
         val_ratio=cfg.val_ratio,
         seed=cfg.seed,
-        max_answer_tokens=cfg.max_answer_tokens,
     )
 
     num_training_steps = len(train_dataloader) * cfg.num_epochs
