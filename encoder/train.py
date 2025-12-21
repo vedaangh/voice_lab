@@ -1,5 +1,6 @@
 import os
 import random
+from datetime import datetime
 import numpy as np
 import torch
 from torch.optim import AdamW
@@ -104,7 +105,7 @@ def prepare_batch(batch, model, tokenizer, before_embeds, after_embeds,
     }
 
 
-@hydra.main(version_base=None, config_path="../../configs", config_name="config")
+@hydra.main(version_base=None, config_path="../configs", config_name="config")
 def main(cfg: DictConfig):
     disable_tokenizer_parallelism()
     set_seed(cfg.seed)
@@ -112,9 +113,12 @@ def main(cfg: DictConfig):
     original_cwd = hydra.utils.get_original_cwd()
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
-    checkpoint_dir = os.path.join(original_cwd, "checkpoints")
+    run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    checkpoint_dir = os.path.join(original_cwd, "checkpoints", "encoder", run_timestamp)
     template_path = os.path.join(original_cwd, "prompt_templates/original.yaml")
-    resume_checkpoint = os.path.join(checkpoint_dir, "last_adapter.pt")
+    
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    print(f"Checkpoints will be saved to: {checkpoint_dir}")
     
     wandb.init(
         project=cfg.wandb_project,
@@ -160,6 +164,7 @@ def main(cfg: DictConfig):
         batch_size=cfg.batch_size,
         val_ratio=cfg.val_ratio,
         seed=cfg.seed,
+        max_answer_tokens=cfg.max_answer_tokens,
     )
 
     num_training_steps = len(train_dataloader) * cfg.num_epochs
@@ -170,20 +175,25 @@ def main(cfg: DictConfig):
         num_training_steps=num_training_steps,
     )
     
-    os.makedirs(checkpoint_dir, exist_ok=True)
-    
     start_epoch = 0
     best_val_loss = float('inf')
     
-    if os.path.exists(resume_checkpoint):
-        print(f"Resuming from checkpoint: {resume_checkpoint}")
-        checkpoint = torch.load(resume_checkpoint, map_location=device)
-        model.adapter.load_state_dict(checkpoint['adapter_state_dict'])
-        optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
-        start_epoch = checkpoint['epoch'] + 1
-        best_val_loss = checkpoint.get('val_loss', float('inf'))
-        print(f"Resumed from epoch {start_epoch}, val_loss: {best_val_loss:.4f}")
+    if cfg.resume and cfg.resume_path:
+        resume_path = cfg.resume_path
+        if not os.path.isabs(resume_path):
+            resume_path = os.path.join(original_cwd, resume_path)
+        
+        if os.path.exists(resume_path):
+            print(f"Resuming from checkpoint: {resume_path}")
+            checkpoint = torch.load(resume_path, map_location=device)
+            model.adapter.load_state_dict(checkpoint['adapter_state_dict'])
+            optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+            scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+            start_epoch = checkpoint['epoch'] + 1
+            best_val_loss = checkpoint.get('val_loss', float('inf'))
+            print(f"Resumed from epoch {start_epoch}, val_loss: {best_val_loss:.4f}")
+        else:
+            print(f"Warning: resume_path '{resume_path}' not found, starting fresh")
     
     for epoch in range(start_epoch, cfg.num_epochs):
         print(f"\nEpoch {epoch + 1}/{cfg.num_epochs}")

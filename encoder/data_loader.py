@@ -40,7 +40,7 @@ def load_instruct_dataset(filter_num_proc: int | None = None):
     return dataset
 
 
-def make_collate_fn(processor: WhisperProcessor, tokenizer, max_audio_samples: int = MAX_AUDIO_SAMPLES):
+def make_collate_fn(processor: WhisperProcessor, tokenizer, max_audio_samples: int = MAX_AUDIO_SAMPLES, max_answer_tokens: int | None = None):
     """Create a collate function that pads audio to 30 s and tokenizes answers without padding."""
 
     def collate(batch):
@@ -64,6 +64,8 @@ def make_collate_fn(processor: WhisperProcessor, tokenizer, max_audio_samples: i
             add_special_tokens=False,
             padding=False,
             return_attention_mask=False,
+            truncation=True if max_answer_tokens else False,
+            max_length=max_answer_tokens,
         )
 
         answer_input_ids = [torch.tensor(ids, dtype=torch.long) for ids in answer_encoding["input_ids"]]
@@ -90,12 +92,13 @@ def get_dataloaders(
     batch_size: int = 4,
     val_ratio: float = 0.01,
     seed: int = 42,
+    max_answer_tokens: int | None = None,
 ):
     dataset = load_instruct_dataset()
     train_dataset, val_dataset = split_dataset(dataset, val_ratio=val_ratio, seed=seed)
 
     processor = WhisperProcessor.from_pretrained("openai/whisper-large-v3")
-    collate_fn = make_collate_fn(processor=processor, tokenizer=tokenizer)
+    collate_fn = make_collate_fn(processor=processor, tokenizer=tokenizer, max_answer_tokens=max_answer_tokens)
 
     train_loader = DataLoader(
         train_dataset,
