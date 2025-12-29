@@ -37,12 +37,23 @@ def compute_ctc_loss(logits, unit_ids, unit_lengths):
     input_lengths = torch.full((batch_size,), T, dtype=torch.long, device=logits.device)
     targets = torch.nn.utils.rnn.pad_sequence(unit_ids, batch_first=True, padding_value=0)
     targets = targets.to(logits.device)
+    target_lengths = unit_lengths.to(logits.device)
+
+    valid_mask = target_lengths <= T
+    if not valid_mask.any():
+        return torch.tensor(0.0, device=logits.device, requires_grad=True)
+
+    if not valid_mask.all():
+        log_probs = log_probs[:, valid_mask, :]
+        input_lengths = input_lengths[valid_mask]
+        targets = targets[valid_mask]
+        target_lengths = target_lengths[valid_mask]
 
     return F.ctc_loss(
         log_probs,
         targets,
         input_lengths,
-        unit_lengths.to(logits.device),
+        target_lengths,
         blank=BLANK_IDX,
         zero_infinity=True,
     )
@@ -232,7 +243,9 @@ def train_decoder(
         decoder_num_layers=cfg.decoder_num_layers,
         decoder_intermediate_dim=cfg.decoder_intermediate_dim,
         decoder_upsample_rate=cfg.decoder_upsample_rate,
-    ).to(dtype=MODEL_DTYPE, device=device)
+    ).to(device)
+    model.speech_text_model.to(dtype=MODEL_DTYPE)
+    model.speech_decoder.to(dtype=torch.float32)
 
     model.speech_text_model.llm.config.use_cache = False
 
@@ -294,7 +307,7 @@ def train_decoder(
                 MODEL_DTYPE,
             )
 
-            logits = model(inputs["inputs_embeds"])
+            logits = model(inputs["inputs_embeds"], response_start=inputs["prompt_len"])
             loss = compute_ctc_loss(logits.float(), batch["unit_ids"], batch["unit_lengths"])
 
             optimizer.zero_grad()
@@ -324,7 +337,7 @@ def train_decoder(
                     MODEL_DTYPE,
                 )
 
-                logits = model(inputs["inputs_embeds"])
+                logits = model(inputs["inputs_embeds"], response_start=inputs["prompt_len"])
                 loss = compute_ctc_loss(logits.float(), batch["unit_ids"], batch["unit_lengths"])
 
                 total_val_loss += loss.item()

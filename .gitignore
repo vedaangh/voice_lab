@@ -59,3 +59,7 @@ wandb/
 
 # Model checkpoints
 checkpoints/
+
+# Large data files
+data/processed/
+*.parquet

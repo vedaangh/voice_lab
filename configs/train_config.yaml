@@ -8,10 +8,10 @@ llm_name: Qwen/Qwen3-4B-Instruct-2507
 adapter_hidden_dim: 2048
 adapter_ds_rate: 5
 
-decoder_hidden_dim: 1024
-decoder_num_heads: 16
-decoder_num_layers: 12
-decoder_intermediate_dim: 4096
+decoder_hidden_dim: 4096
+decoder_num_heads: 32
+decoder_num_layers: 2
+decoder_intermediate_dim: 11008
 decoder_upsample_rate: 25
 
 # Training - shared

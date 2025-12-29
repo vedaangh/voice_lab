@@ -91,3 +91,29 @@ log_probs = F.log_softmax(logits, dim=-1).transpose(0, 1)  # [T, batch, K+1]
 loss = F.ctc_loss(log_probs, targets, input_lengths, target_lengths, blank=1000)
 ```
 
+## Dataset Processing: Re-extracting Speech Units
+
+### The Problem
+The original `yuekai/InstructS2S-200K` dataset has a `speech_token` field, but these tokens use a different vocabulary than our K=1000 HuBERT centroids. The unit indices were out of range for our model (which expects 0-999 + blank=1000).
+
+### Solution: Azure TTS + Unit Extraction Pipeline
+We rebuilt the answer audio and extracted units ourselves:
+
+1. **Azure TTS Synthesis**: For each sample's `answer` text, synthesize speech using Azure Cognitive Services (`en-US-JennyNeural` voice, 16kHz mono PCM).
+   - 50 concurrent TTS requests for throughput
+   - 3 retries per sample on failure
+
+2. **Unit Extraction**: Run synthesized audio through our `UnitExtractor`:
+   - HuBERT-Large encoder → continuous features
+   - K-means (K=1000) quantization → discrete unit IDs
+   - Batch processing (16 samples) on GPU
+
+3. **Output**: Parquet file with `(id, answer_units)` columns
+   - `id` = original dataset index for joining
+   - `answer_units` = list of unit IDs (0-999)
+
+4. **Data Loader**: Join the parquet with original HF dataset by index, keeping only samples where we successfully extracted units (~422K samples).
+
+### Why Not Use Original speech_token?
+The original tokens appear to come from a different tokenization scheme (possibly different K, different encoder, or different quantization). Using them directly caused index-out-of-bounds errors in our CTC loss (which expects indices 0-1000).
+

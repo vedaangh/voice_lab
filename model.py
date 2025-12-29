@@ -175,15 +175,17 @@ class SpeechToSpeechModel(nn.Module):
             upsample_rate=decoder_upsample_rate,
         )
 
-    def forward(self, inputs_embeds):
+    def forward(self, inputs_embeds, response_start: int):
         """
         Args:
             inputs_embeds: Pre-constructed embeddings [batch, seq_len, hidden_dim]
+            response_start: Index where the response starts (prompt length)
         Returns:
-            Unit logits [batch, T, NUM_UNITS + 1] where T = upsampled seq length
+            Unit logits [batch, T, NUM_UNITS + 1] where T = response_len * upsample_rate
         """
         with torch.no_grad():
             self.speech_text_model(inputs_embeds=inputs_embeds)
-            hidden_states = self.speech_text_model.hidden_states
+            hidden_states = self.speech_text_model.hidden_states.float()
 
-        return self.speech_decoder(hidden_states)
+        response_hidden = hidden_states[:, response_start:, :]
+        return self.speech_decoder(response_hidden)

@@ -96,4 +96,9 @@ def prepare_batch(
 
     attention_mask = torch.cat(masks, dim=1)
 
-    return {"inputs_embeds": inputs_embeds, "labels": labels, "attention_mask": attention_mask}
+    return {
+        "inputs_embeds": inputs_embeds,
+        "labels": labels,
+        "attention_mask": attention_mask,
+        "prompt_len": prompt_len,
+    }
