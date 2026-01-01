@@ -60,6 +60,9 @@ wandb/
 # Model checkpoints
 checkpoints/
 
+# Vocoder (downloaded separately)
+vocoder/
+
 # Large data files
 data/processed/
 *.parquet
