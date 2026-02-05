@@ -87,44 +87,85 @@ else
 fi
 
 echo "" | tee -a "$LOG_FILE"
-echo "Getting AMI..." | tee -a "$LOG_FILE"
+echo "Finding latest NVIDIA Deep Learning AMIs..." | tee -a "$LOG_FILE"
+echo "" | tee -a "$LOG_FILE"
 
-AMI_ID=$(aws ec2 describe-images \
+CONDA_AMI=$(aws ec2 describe-images \
     --region "$REGION" \
     --owners amazon \
-    --filters "Name=name,Values=Deep Learning OSS Nvidia Driver AMI GPU PyTorch 2.8* (Ubuntu 24.04)*" "Name=state,Values=available" \
+    --filters "Name=name,Values=Deep Learning Proprietary Nvidia Driver AMI GPU PyTorch*Ubuntu*" "Name=state,Values=available" \
     --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
     --output text)
 
-if [ -z "$AMI_ID" ] || [ "$AMI_ID" == "None" ]; then
-    AMI_ID=$(aws ec2 describe-images \
-        --region "$REGION" \
-        --owners amazon \
-        --filters "Name=name,Values=Deep Learning OSS Nvidia Driver AMI GPU PyTorch * (Ubuntu 24.04)*" "Name=state,Values=available" \
-        --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
-        --output text)
+OSS_AMI=$(aws ec2 describe-images \
+    --region "$REGION" \
+    --owners amazon \
+    --filters "Name=name,Values=Deep Learning OSS Nvidia Driver AMI GPU PyTorch * (Ubuntu 24.04)*" "Name=state,Values=available" \
+    --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
+    --output text)
+
+declare -a AVAILABLE_AMIS
+declare -A AMI_NAMES
+
+if [ -n "$CONDA_AMI" ] && [ "$CONDA_AMI" != "None" ]; then
+    CONDA_AMI_ID=$(echo "$CONDA_AMI" | awk '{print $1}')
+    CONDA_AMI_NAME=$(echo "$CONDA_AMI" | cut -f2-)
+    AVAILABLE_AMIS+=("$CONDA_AMI_ID")
+    AMI_NAMES["$CONDA_AMI_ID"]="$CONDA_AMI_NAME"
 fi
 
-if [ -z "$AMI_ID" ] || [ "$AMI_ID" == "None" ]; then
-    AMI_ID=$(aws ec2 describe-images \
-        --region "$REGION" \
-        --owners amazon \
-        --filters "Name=name,Values=Deep Learning OSS Nvidia Driver AMI GPU PyTorch * (Ubuntu 22.04)*" "Name=state,Values=available" \
-        --query 'sort_by(Images, &CreationDate)[-1].[ImageId,Name]' \
-        --output text)
+if [ -n "$OSS_AMI" ] && [ "$OSS_AMI" != "None" ]; then
+    OSS_AMI_ID=$(echo "$OSS_AMI" | awk '{print $1}')
+    OSS_AMI_NAME=$(echo "$OSS_AMI" | cut -f2-)
+    AVAILABLE_AMIS+=("$OSS_AMI_ID")
+    AMI_NAMES["$OSS_AMI_ID"]="$OSS_AMI_NAME"
 fi
 
-AMI_ID_ONLY=$(echo "$AMI_ID" | awk '{print $1}')
-AMI_NAME=$(echo "$AMI_ID" | cut -f2-)
-
-echo "Using AMI: $AMI_ID_ONLY" | tee -a "$LOG_FILE"
-if [ -n "$AMI_NAME" ]; then
-    echo "AMI Name: $AMI_NAME" | tee -a "$LOG_FILE"
+if [ ${#AVAILABLE_AMIS[@]} -eq 0 ]; then
+    echo "Error: No suitable AMIs found in region $REGION" | tee -a "$LOG_FILE"
+    exit 1
 fi
 
-AMI_ID="$AMI_ID_ONLY"
+echo "=== Available AMIs ===" | tee -a "$LOG_FILE"
+for i in "${!AVAILABLE_AMIS[@]}"; do
+    ami_id="${AVAILABLE_AMIS[$i]}"
+    ami_name="${AMI_NAMES[$ami_id]}"
+    echo "$((i+1)). $ami_id" | tee -a "$LOG_FILE"
+    echo "   $ami_name" | tee -a "$LOG_FILE"
+    
+    if [[ "$ami_name" == *"Proprietary"* ]]; then
+        echo "   Type: Conda (source activate pytorch)" | tee -a "$LOG_FILE"
+        echo "   ✓ Full conda environments with 'source activate pytorch'" | tee -a "$LOG_FILE"
+    else
+        echo "   Type: OSS (system python - may need setup)" | tee -a "$LOG_FILE"
+    fi
+    
+    if [[ "$ami_name" == *"PyTorch 2.8"* ]] || [[ "$ami_name" == *"PyTorch 2.9"* ]] || [[ "$ami_name" == *"PyTorch 3."* ]]; then
+        echo "   ✓ PyTorch 2.8+ - torchcodec AudioDecoder supported" | tee -a "$LOG_FILE"
+    fi
+    echo "" | tee -a "$LOG_FILE"
+done
+
+read -p "Select AMI number (or press Enter for #1): " ami_selection
+
+if [ -z "$ami_selection" ]; then
+    ami_selection=1
+fi
+
+if ! [[ "$ami_selection" =~ ^[0-9]+$ ]] || [ "$ami_selection" -lt 1 ] || [ "$ami_selection" -gt ${#AVAILABLE_AMIS[@]} ]; then
+    echo "Error: Invalid AMI selection" | tee -a "$LOG_FILE"
+    exit 1
+fi
+
+AMI_ID="${AVAILABLE_AMIS[$((ami_selection-1))]}"
+AMI_NAME="${AMI_NAMES[$AMI_ID]}"
+
+echo "" | tee -a "$LOG_FILE"
+echo "Selected AMI: $AMI_ID" | tee -a "$LOG_FILE"
+echo "Name: $AMI_NAME" | tee -a "$LOG_FILE"
 DISK_SIZE=500
 
+echo "Disk Size: ${DISK_SIZE} GB" | tee -a "$LOG_FILE"
 echo "" | tee -a "$LOG_FILE"
 echo "Starting automatic instance request loop..." | tee -a "$LOG_FILE"
 echo "Press Ctrl+C to stop" | tee -a "$LOG_FILE"

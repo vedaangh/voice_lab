@@ -1,0 +1,193 @@
+%===========================
+% Part II Project Proposal
+% Polished Overleaf template (pdfLaTeX)
+%===========================
+\documentclass[11pt,a4paper]{scrartcl}
+
+%---- Encoding & typography
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{newpxtext,newpxmath} % Palatino-like text + math
+\linespread{1.04}
+
+%---- Layout
+\usepackage[margin=1in]{geometry}
+\KOMAoptions{parskip=half} % space between paragraphs, no indents
+
+%---- Colors, links, and headings
+\usepackage[dvipsnames]{xcolor}
+\definecolor{Accent}{HTML}{4F46E5} % Indigo-600
+\definecolor{AccentDark}{HTML}{3730A3}
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=AccentDark,
+  urlcolor=Accent,
+  citecolor=Accent
+}
+
+%---- Section styling (KOMA-Script way)
+\addtokomafont{section}{\Large\bfseries\color{AccentDark}}
+\addtokomafont{subsection}{\large\bfseries\color{AccentDark}}
+\addtokomafont{subsubsection}{\bfseries\color{AccentDark}}
+
+% Tighten section spacing a touch
+\RedeclareSectionCommand[beforeskip=12pt plus 3pt minus 1pt,afterskip=6pt plus 2pt minus 1pt]{section}
+\RedeclareSectionCommand[beforeskip=10pt plus 3pt minus 1pt,afterskip=4pt plus 1pt minus 1pt]{subsection}
+
+%---- Lists
+\usepackage{enumitem}
+\setlist[itemize]{itemsep=0.2em, topsep=0.3em}
+\setlist[enumerate]{itemsep=0.2em, topsep=0.3em}
+
+%---- Nice callout boxes for success criteria, notes, etc.
+\usepackage[most]{tcolorbox}
+\tcbset{
+  colback=Accent!4,
+  colframe=Accent!60!black,
+  boxrule=0.6pt,
+  arc=2mm,
+  left=7pt,right=7pt,top=6pt,bottom=6pt
+}
+\newtcolorbox{successbox}{title=\textbf{Success criterion}}
+\newtcolorbox{notebox}{colback=black!3,colframe=black!40,boxrule=0.5pt,arc=2mm}
+
+%---- Header / footer
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\textit{Part II Project Proposal}}
+\rhead{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+%---- Title
+\title{\vspace{-1.2em}\textbf{Part II Project Proposal}}
+\subtitle{A Workbench for Comparing Voice-LLM Architectures}
+\author{} % Add your name here if desired
+\date{}   % Add a date if required
+
+\begin{document}
+\maketitle
+\vspace{-1.5em}
+\hrule height 0.6pt \vspace{0.8em}
+
+\section{Introduction and background}
+
+Conversational, voice-based interaction has long preoccupied computer engineers, with roots traceable to Edison’s 1878 phonograph. Modern large language models (LLMs) renew this ambition by enabling agentic systems, called voice agents, that communicate and speak in natural language. Enterprises are deploying voice agents—most visibly in customer support—for scalable, always-on service.
+
+However, current agents often fall into an \emph{uncanny valley}: prosody sounds off, turn-taking is brittle, and latency interrupts the flow. Two factors appear crucial to closing this gap:
+\begin{enumerate}
+  \item \textbf{Speech realism}—prosody, pauses, micro-latency, and true full-duplex conversation.
+  \item \textbf{Frontier-level intelligence with tool-use}—agentic reasoning and external tool calling.
+\end{enumerate}
+
+Contemporary approaches include: (i) \emph{voice-to-voice monoliths}, (ii) \emph{modular STT $\to$ LLM $\to$ TTS} pipelines, and (iii) \emph{natively multimodal LLMs} with audio integrated into the model’s latent state. Notably, the STT–LLM–TTS pipeline dominates enterprise deployments, while models such as GPT-4o and research lines like \textbf{Llama-Omni (1/2)} and \textbf{SALMONN-Omni} explore modular or native audio integration.
+
+Multimodal I/O preserves frontier-level LLM intelligence while encoding speech cues, using modular encoder–LLM–decoder pipelines or alternatives like CSMs, full-duplex SALMONN-Omni, and thinker–talker Qwen-3. The literature around multimodal voice-models is yet to converge on a specific way of adding speech output.
+
+A persistent problem in the literature is comparability: papers evaluate whole stacks rather than isolating audio-integration design choices. This makes sense as the papers are marking the releases of voice-LLMs, rather than the architectural changes themselves. However, gains may come from a different base LLM rather than the modality integration itself, and porting integrations across backbones is awkward. We therefore propose a maintainable workbench to combine any open-source text-only LLMs with a voice-integration strategy and evaluate them head-to-head under a standard interface and a common benchmark (\textbf{VoiceBench}).
+
+\section{Description of work and success criteria}
+
+\subsection{The Workbench}
+
+The workbench will be a Python library that can pair any text-only LLM with a Llama-Omni style encoder–LLM–decoder setup, expose a \textbf{uniform streaming API}, and run \textbf{VoiceBench} on any given speech-LLM. The primary backbone is \textbf{Qwen3-4B} (for feasibility), with targeted support for \textbf{Qwen3-30B-A3B-Instruct-2507} to enable larger-scale comparisons with open-source multimodal state of the art.
+
+\begin{successbox}
+An API that can be hosted remotely to interact with pre-trained models through a unified interface and evaluate their performance using the VoiceBench benchmark.
+\end{successbox}
+
+\subsection{Re-implementing \textbf{Llama-Omni}-style encoder–decoders}
+We intend to re-implement \textbf{Llama-Omni} with two parts—an \textit{encoder} and a \textit{decoder}—trained on the \textbf{InstructS2S} triplets \(\langle\)speech-question, text-response, speech-response\(\rangle\).
+\\
+\\
+The encoder uses \textbf{Whisper-large-v3} plus an adapter (down-sampler + 2-layer MLP with ReLU) that projects speech features into the LLM’s embedding space. During adapter training, both Whisper and the LLM are frozen, and trained using the standard language-modelling cross-entropy loss.
+\\
+\\
+For speech generation, we take the LLM’s final hidden state at each output token, upsample it, and feed it to a non-autoregressive transformer trained with \textbf{CTC loss} to predict discrete acoustic-unit tokens. A duration predictor and a pretrained \textbf{HiFi-GAN} vocoder synthesize waveforms from these units. Unit tokens come from feeding the audio into a pretrained \textbf{HuBERT} model to obtain embeddings, performing K-means clustering to tokenize the embeddings, then collapsing consecutive repeats.
+\\
+\\
+Training is two-stage: (1) freeze the encoder and LLM, train the adapter on speech-in \(\rightarrow\) text-out; (2) add the decoder, freeze everything except the non-autoregressive transformer, and train on speech-in \(\rightarrow\) speech-out.
+
+\begin{successbox}
+A working Llama-Omni re-implementation interoperable with \textbf{Qwen3-4B} and \textbf{Qwen3-30B-A3B-Instruct-2507} via the workbench and accessible through the ported API.\\\\
+\noindent\textbf{Risk mitigation:} If the Llama-Omni–style architecture does not yield measurable results, we will adopt an alternative and revise this proposal.
+\end{successbox}
+
+\section{Extensions and further work}
+
+There are many potential  integrations; given the scope and evolving literature, these remain contingent.
+
+\subsection*{Evaluate other voice architectures}
+\begin{enumerate}
+  \item \textbf{Llama-Omni-2}—A speech-enabled LLM (built on Qwen2.5) that integrates a streaming speech decoder and low-latency response generation.
+  \item \textbf{SALMONN-Omni}— Codec-free, full-duplex speech LLM that learns when to listen vs.\ speak via internal “thinking” step, enabling barge-in and echo cancellation.
+  \item \textbf{Conversational Speech Models (CSM)}—Sesame’s multimodal model works directly on RVQ audio tokens using dual autoregressive transformers for text + speech.
+  \item \textbf{Moshi}— Speech–text foundation model for real-time full-duplex dialogue handling overlapping speech by modeling user and model speech in parallel.
+\end{enumerate}
+
+\subsection*{Benchmark against other models}
+Combine the Llama-Omni-style encoder path with strong agentic bases (e.g., GPT-OSS-20B/120B-class) to test tool-use performance.
+
+\subsection*{Advanced training}
+Synthesize interleaved \textbf{text+tool+prosody} corpora using a powerful LLM (e.g., Qwen3-Max / GPT-OSS-120B), inserting prosody tokens and fillers (“um”, “hmm”) and rendering with TTS to create one of the first datasets for \emph{interleaved} voice output and tool use.
+
+\section{Work plan}
+
+\emph{My objective will be to write largely throughout the process, however a few weeks have been allocated explicitly to writing.}
+
+\subsection{Michaelmas Term (Full Term: Tue 7 Oct – Fri 5 Dec 2025)}
+\begin{itemize}
+  \item \textbf{Week 1–2 (Core)}—Setup repository with remote AWS access; finalize datasets and set-up preprocessing.
+  \item \textbf{Week 3–4 (Core)}—Implement \textbf{encoder} path (Whisper-v3 $\to$ adapter $\to$ Qwen3-4B). V1.
+  \item \textbf{Week 5–6 (Core)}—Implement \textbf{decoder} path (hidden-state upsampling $\to$ unit-transformer with CTC $\to$ HiFi-GAN).
+  \item \textbf{Week 7–8 (Core)}—Wrap encoder/decoder to make hyper-parameter tuning easy; set up training pipeline for Qwen3-30B-A3B-Instruct-2507.
+\end{itemize}
+
+\subsection{Michaelmas Vacation}
+\begin{itemize}
+  \item \textbf{Week 1–2 (Core)}—Run training run on Qwen3-30B-A3B-Instruct-2507.
+  \item \textbf{Week 3–4 (Core)}—Break for Christmas.
+  \item \textbf{Week 5–6 (Core)}—Make the library modular and maintainable; set up a Hugging Face integration.
+  \item \textbf{Week 7 (Core)}—Wrap up the library construction.
+\end{itemize}
+
+\subsection{Lent Term}
+\begin{itemize}
+  \item \textbf{Week 1–2 (Core)}—Write up first draft with core project completed.
+  \item \textbf{Week 3–4 (Extension)}—Conduct literature review across different voice architectures. Select architectures to implement.
+  \item \textbf{Week 5–6 (Extension)}—Implement one of the selected architectures and integrate it with the library. 
+  \item \textbf{Week 7–8 (Extension)}—Perform a training run on a new model (e.g. GPT-OSS-120B);Revision for DNNs Exam.
+\end{itemize}
+
+\subsection{Lent Break}
+\begin{itemize}
+  \item \textbf{Week 1–2 (Extension)}—Explore alternative extensions.
+  \item \textbf{Week 3–4 (Core)}— Continue exploring extensions and write final dissertation.
+  \item \textbf{Week 5–6 (Buffer)}—Buffer time in case something goes wrong.
+\end{itemize}
+
+\subsection{Easter}
+\begin{itemize}
+  \item \textbf{Week 1–2 (Buffer)}—Buffer time in case something goes wrong.
+\end{itemize}
+
+\section{Starting point}
+
+I have experience with fine-tuning LLMs and training neural networks, and have used external GPUs before; I have \textbf{not} used the AWS stack.
+\section{Resource declaration}
+
+\begin{itemize}
+  \item \textbf{Compute}: \$55,000 in AWS credits, and \$30,000 in Azure credits. 
+  \item \textbf{Version control \& backup}: Will use GitHub for code, OneDrive for text / documents.
+  \item \textbf{Device}: HP Omen 16 with 16GB RAM and NVIDIA 4050 RTX GPU. Will procure a new device if the need arises. I accept full responsibility for this machine and I have made contingency plans to protect myself against hardware and/or software failure.
+
+\end{itemize}
+
+% Optional note box (remove if not needed)
+% \begin{notebox}
+% Submit via Overleaf as a single PDF. Replace author and add a date if required by your course.
+% \end{notebox}
+
+\end{document}
