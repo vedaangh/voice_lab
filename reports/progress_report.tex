@@ -1,0 +1,112 @@
+%===========================
+% Part II Progress Report
+%===========================
+\documentclass[11pt,a4paper]{scrartcl}
+
+%---- Encoding & typography
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage{microtype}
+\usepackage{newpxtext,newpxmath}
+\linespread{1.04}
+
+%---- Layout
+\usepackage[margin=1in]{geometry}
+\usepackage{graphicx}
+\KOMAoptions{parskip=half}
+
+%---- Colors, links, and headings
+\usepackage[dvipsnames]{xcolor}
+\definecolor{Accent}{HTML}{4F46E5}
+\definecolor{AccentDark}{HTML}{3730A3}
+\usepackage{hyperref}
+\hypersetup{
+  colorlinks=true,
+  linkcolor=AccentDark,
+  urlcolor=Accent,
+  citecolor=Accent
+}
+
+%---- Section styling
+\addtokomafont{section}{\large\bfseries\color{AccentDark}}
+\addtokomafont{subsection}{\normalsize\bfseries\color{AccentDark}}
+\RedeclareSectionCommand[beforeskip=10pt,afterskip=4pt]{section}
+\RedeclareSectionCommand[beforeskip=8pt,afterskip=3pt]{subsection}
+
+%---- Lists
+\usepackage{enumitem}
+\setlist[itemize]{itemsep=0.1em, topsep=0.2em}
+
+%---- Callout boxes
+\usepackage[most]{tcolorbox}
+\tcbset{
+  colback=Accent!4,
+  colframe=Accent!60!black,
+  boxrule=0.6pt,
+  arc=2mm,
+  left=6pt,right=6pt,top=5pt,bottom=5pt
+}
+\newtcolorbox{successbox}{title=\textbf{Success Criteria Status}}
+
+%---- Header / footer
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\lhead{\textit{Part II Progress Report}}
+\rhead{\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+
+%---- Title
+\title{\vspace{-1.5em}\textbf{Part II Progress Report}}
+\subtitle{A Workbench for Comparing Voice-LLM Architectures}
+\author{
+  \textbf{Vedaangh Rungta} (vr373@cam.ac.uk)\\[0.2em]
+  \small Supervisors: Dr Soumya Banerjee, Prof Nic Lane \quad DoS: Janet Davis
+}
+\date{5 February 2026}
+
+\begin{document}
+\maketitle
+\vspace{-1.5em}
+\hrule height 0.6pt \vspace{0.6em}
+
+\begin{successbox}
+\textbf{Criterion 1} (Workbench): An API that can be hosted remotely to interact with pre-trained models through a unified interface and evaluate their performance using VoiceBench. \textbf{Status: Not yet started.}\\[0.3em]
+\textbf{Criterion 2} (Llama-Omni): A working Llama-Omni re-implementation interoperable with Qwen3-4B and Qwen3-30B, accessible through the API. \textbf{Status: Partially complete.} Qwen3-4B trained; Qwen3-30B and API integration pending.
+\end{successbox}
+
+\section{Work Completed}
+
+The InstructS2S-200K dataset's speech tokens were incompatible with our K=1000 HuBERT vocabulary, so I built a pipeline using Azure TTS to re-synthesize 423K samples and extract discrete units via mHuBERT and K-means clustering, producing 422,790 usable samples.
+
+I implemented the encoder path with Whisper-large-v3 and a 2-layer MLP adapter that downsamples by 5$\times$ and projects into Qwen3-4B's embedding space. Training took 7.5 hours on a single H100 for 3 epochs, achieving a final validation loss of 1.60.
+
+The decoder is a non-autoregressive transformer (12 layers, 1024 hidden dimension) trained with CTC loss to output discrete units for a HiFi-GAN vocoder. Training completed in 16.5 hours with a final validation loss of 0.74.
+
+The end-to-end inference pipeline is operational. Output speech is coherent for 7--8 seconds before degrading, likely because our decoder is smaller than the original paper's (1024 vs 4096 hidden dimensions).
+
+\section{Difficulties}
+
+Dataset incompatibility added one week of unplanned work. GPU availability on AWS was inconsistent, with H100 instances frequently unavailable. Competing coursework deadlines also consumed time during Michaelmas, and a period of sickness over the break led to a backlog forming.
+
+\section{Schedule and Recovery}
+
+The original schedule targeted Qwen3-30B training during Michaelmas vacation and a first draft by Lent week 2 to allow time for submitting complementary work to workshops. I am now submitting separate research to those workshops instead. The revised plan is:
+
+\subsection*{Lent term (Revised)}
+\begin{itemize}
+  \item \textbf{Week 3:} Decoder ablations to improve output consistency.
+  \item \textbf{Week 4:} Qwen3-30B training run.
+  \item \textbf{Week 5:} API development and VoiceBench evaluation.
+  \item \textbf{Weeks 6--8:} Extensions.
+\end{itemize}
+
+\subsection*{Lent break / Easter}
+\begin{itemize}
+  \item \textbf{Lent break weeks 1--2:} Dissertation writing.
+  \item \textbf{Lent break weeks 3--4 / Easter:} Buffer.
+\end{itemize}
+
+I have also secured increased GPU quotas on both AWS and GCP, providing access to multiple H100s, A100s, and B200s, which resolves the previous availability issues.
+
+\end{document}

@@ -1,0 +1,228 @@
+%===========================
+% Part II Progress Presentation
+% 5-minute presentation (max 4 slides)
+%===========================
+\documentclass[aspectratio=169,11pt]{beamer}
+
+%---- Theme and colors
+\usetheme{default}
+\usecolortheme{default}
+
+\definecolor{CamBlue}{HTML}{003E74}
+\definecolor{Accent}{HTML}{4F46E5}
+\definecolor{AccentLight}{HTML}{818CF8}
+\definecolor{Success}{HTML}{059669}
+\definecolor{Warning}{HTML}{D97706}
+
+\setbeamercolor{frametitle}{fg=CamBlue}
+\setbeamercolor{title}{fg=CamBlue}
+\setbeamercolor{structure}{fg=Accent}
+\setbeamercolor{itemize item}{fg=Accent}
+\setbeamercolor{itemize subitem}{fg=AccentLight}
+
+%---- Fonts
+\usepackage[T1]{fontenc}
+\usepackage{newpxtext}
+\setbeamerfont{frametitle}{series=\bfseries}
+\setbeamerfont{title}{series=\bfseries}
+
+%---- Remove navigation
+\setbeamertemplate{navigation symbols}{}
+\setbeamertemplate{footline}[frame number]
+
+%---- Graphics
+\usepackage{graphicx}
+\usepackage{tikz}
+\usetikzlibrary{shapes,arrows,positioning,fit,backgrounds}
+
+%---- Boxes
+\usepackage[most]{tcolorbox}
+\newtcolorbox{successbox}{colback=Success!10,colframe=Success,boxrule=1pt,arc=3pt}
+\newtcolorbox{warningbox}{colback=Warning!10,colframe=Warning,boxrule=1pt,arc=3pt}
+
+%---- Title
+\title{A Workbench for Comparing Voice-LLM Architectures}
+\subtitle{Part II Progress Presentation}
+\author{Vedaangh Rungta (vr373@cam.ac.uk)}
+\date{February 2026}
+
+\begin{document}
+
+%====================
+% SLIDE 1: Title + Overview
+%====================
+\begin{frame}
+\titlepage
+\end{frame}
+
+%====================
+% SLIDE 2: What I Built
+%====================
+\begin{frame}{What I Built: Llama-Omni Re-implementation}
+
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\textbf{Architecture} (speech-in $\to$ speech-out):
+
+\vspace{0.3em}
+\begin{center}
+\begin{tikzpicture}[
+    node distance=0.3cm and 0.5cm,
+    box/.style={rectangle, draw=Accent, fill=Accent!10, rounded corners, 
+                minimum width=1.8cm, minimum height=0.6cm, font=\scriptsize, align=center},
+    arrow/.style={->, thick, Accent},
+    label/.style={font=\scriptsize}
+]
+    % Top row: Encoder path
+    \node[box] (whisper) {Whisper-v3};
+    \node[box, right=of whisper] (adapter) {Adapter};
+    \node[box, right=of adapter] (qwen) {Qwen3-4B};
+    
+    % Bottom row: Decoder path
+    \node[box, below=0.8cm of adapter] (decoder) {NAR Decoder};
+    \node[box, right=of decoder] (vocoder) {HiFi-GAN};
+    
+    % Arrows
+    \draw[arrow] (whisper) -- (adapter);
+    \draw[arrow] (adapter) -- (qwen);
+    \draw[arrow] (qwen.south) -- ++(0,-0.3) -| (decoder.north);
+    \draw[arrow] (decoder) -- (vocoder);
+    
+    % Labels
+    \node[label, left=0.2cm of whisper] {Audio in};
+    \node[label, right=0.2cm of vocoder] {Audio out};
+\end{tikzpicture}
+\end{center}
+
+\vspace{0.5em}
+\textbf{Training} (two-stage):
+\begin{enumerate}\small
+    \item Encoder: freeze Whisper + LLM, train adapter
+    \item Decoder: freeze all, train NAR transformer + CTC
+\end{enumerate}
+\end{column}
+
+\begin{column}{0.45\textwidth}
+\begin{successbox}
+\textbf{Results on Qwen3-4B:}\\[0.3em]
+\begin{tabular}{ll}
+Encoder val loss: & \textbf{1.60} \\
+Decoder val loss: & \textbf{0.74} \\
+Training time: & $\sim$24 hrs \\
+\end{tabular}
+\end{successbox}
+
+\vspace{0.3em}
+\centering
+\includegraphics[width=\textwidth]{figures/input_output_comparison.pdf}\\
+{\scriptsize Input (left) vs Output (right) spectrograms}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+%====================
+% SLIDE 3: Current Status
+%====================
+\begin{frame}{Project Status: Core Complete, Extension Pending}
+
+\begin{columns}[T]
+\begin{column}{0.48\textwidth}
+\textbf{\textcolor{Success}{\checkmark} Completed:}
+\begin{itemize}\small
+    \item AWS/GCP infrastructure + GPUs
+    \item Dataset processing pipeline
+    \item Encoder (Whisper $\to$ adapter $\to$ LLM)
+    \item Decoder (hidden $\to$ units $\to$ audio)
+    \item End-to-end inference pipeline
+    \item Training configs for 30B model
+\end{itemize}
+
+\vspace{0.3em}
+\begin{successbox}
+\centering
+\textbf{Primary success criterion met}\\
+Working speech-to-speech system
+\end{successbox}
+\end{column}
+
+\begin{column}{0.48\textwidth}
+\textbf{\textcolor{Warning}{$\circ$} Remaining:}
+\begin{itemize}\small
+    \item Qwen3-30B training run
+    \item VoiceBench evaluation
+    \item Dissertation writing
+\end{itemize}
+
+\vspace{0.3em}
+\begin{warningbox}
+\textbf{5--6 weeks behind} on 30B work\\[0.2em]
+\scriptsize Original schedule was ambitious (workshop deadline). Now submitting other work to workshops.
+\end{warningbox}
+
+\vspace{0.3em}
+\small
+\textbf{Mitigation:} GPU quotas secured on AWS \& GCP (H100s, A100s, B200s); infrastructure ready
+\end{column}
+\end{columns}
+
+\end{frame}
+
+%====================
+% SLIDE 4: Path Forward
+%====================
+\begin{frame}{Path to Completion}
+
+\begin{columns}[T]
+\begin{column}{0.52\textwidth}
+\textbf{Revised Timeline:}
+
+\vspace{0.2em}
+{\small
+\begin{tabular}{@{}p{2.4cm}p{4.8cm}@{}}
+\textcolor{Accent}{\textbf{Lent Wk 2--4}} & 30B training + decoder fixes \\[0.15em]
+\textcolor{Accent}{\textbf{Lent Wk 5--6}} & VoiceBench evaluation \\[0.15em]
+\textcolor{Accent}{\textbf{Lent Break}} & Begin dissertation writing \\[0.15em]
+\textcolor{Accent}{\textbf{Easter}} & Complete dissertation \\[0.15em]
+\textcolor{Accent}{\textbf{May 15}} & Deadline (14+ weeks away) \\
+\end{tabular}
+}
+
+\vspace{0.5em}
+\textbf{Why I'm confident:}
+\begin{itemize}\small
+    \item Core architecture proven on 4B
+    \item 30B = same code, change one config param
+    \item 14+ weeks until May 15 deadline
+    \item Workshop pressure removed (other submission)
+\end{itemize}
+\end{column}
+
+\begin{column}{0.45\textwidth}
+\textbf{Deliverables:}
+
+\vspace{0.2em}
+\begin{enumerate}\small
+    \item Trained models (4B + 30B)
+    \item VoiceBench comparison
+    \item Modular Python library
+    \item Dissertation with:
+    \begin{itemize}\scriptsize
+        \item Architecture analysis
+        \item Training methodology
+        \item Quantitative evaluation
+        \item Qualitative examples
+    \end{itemize}
+\end{enumerate}
+
+\vspace{0.3em}
+\begin{successbox}
+\centering
+\textbf{On track for successful completion}
+\end{successbox}
+\end{column}
+\end{columns}
+
+\end{frame}
+
+\end{document}
