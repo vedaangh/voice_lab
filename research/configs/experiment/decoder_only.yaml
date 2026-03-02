@@ -1,0 +1,8 @@
+# @package _global_
+# Decoder-only training using pre-trained adapter
+
+train_encoder: false
+adapter_checkpoint: checkpoints/20251224_182316/encoder/best_adapter.pt
+
+batch_size: 2
+decoder_intermediate_dim: 4096

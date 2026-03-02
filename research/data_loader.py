@@ -16,7 +16,6 @@ from datasets import load_from_disk
 from torch.utils.data import DataLoader
 from transformers import WhisperProcessor
 
-PROCESSED_DATASET_DIR = Path("/home/ubuntu/voice_lab/data/processed/training_dataset")
 TARGET_SAMPLE_RATE = 16_000
 MAX_AUDIO_SAMPLES = 480_000  # 30 seconds at 16 kHz
 NUM_WORKERS = 4
@@ -29,17 +28,18 @@ def _pad_or_trim(audio: np.ndarray, target_length: int = MAX_AUDIO_SAMPLES) -> n
     return np.pad(audio, (0, target_length - audio_length), mode="constant", constant_values=0)
 
 
-def load_instruct_dataset():
+def load_instruct_dataset(data_dir: str):
     """
     Load pre-processed dataset from disk.
     Run prepare_training_dataset.py first if the dataset doesn't exist.
     """
-    if not PROCESSED_DATASET_DIR.exists():
+    data_path = Path(data_dir)
+    if not data_path.exists():
         raise FileNotFoundError(
-            f"Processed dataset not found at {PROCESSED_DATASET_DIR}. "
+            f"Processed dataset not found at {data_path}. "
             "Run: python dataset_processing/prepare_training_dataset.py"
         )
-    return load_from_disk(str(PROCESSED_DATASET_DIR))
+    return load_from_disk(str(data_path))
 
 
 def make_collate_fn(
@@ -90,13 +90,14 @@ def make_collate_fn(
 
 def get_dataloaders(
     tokenizer,
+    data_dir: str,
     batch_size: int = 4,
     val_ratio: float = 0.01,
     seed: int = 42,
     whisper_name: str = "openai/whisper-large-v3",
     max_answer_tokens: int | None = 128,
 ):
-    dataset = load_instruct_dataset()
+    dataset = load_instruct_dataset(data_dir)
     split = dataset.train_test_split(test_size=val_ratio, seed=seed)
     train_dataset, val_dataset = split["train"], split["test"]
 

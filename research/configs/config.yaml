@@ -1,6 +1,3 @@
-# Paper settings from LLaMA-Omni
-# Training takes ~65 hours on 4x NVIDIA L40 GPUs
-
 # Training phases
 train_encoder: true
 train_decoder: true
@@ -18,25 +15,30 @@ decoder_intermediate_dim: 11008
 decoder_upsample_rate: 25
 
 # Training - shared
-batch_size: 8
-warmup_ratio: 0.03
+batch_size: 4
+warmup_ratio: 0.05
 gradient_clip: 1.0
 val_ratio: 0.01
 seed: 42
 max_answer_tokens: 128
 
-# Training - per phase (both 3 epochs as per paper)
-encoder_num_epochs: 3
-encoder_learning_rate: 2e-5
-decoder_num_epochs: 3
-decoder_learning_rate: 2e-4
+# Training - per phase
+encoder_num_epochs: 10
+encoder_learning_rate: 1e-4
+decoder_num_epochs: 10
+decoder_learning_rate: 1e-4
 
-# Checkpoints
+# Data
+data_dir: /home/ubuntu/voice_lab/data/processed/training_dataset
+
+# Checkpoints (set path to skip training that phase, or to resume)
 adapter_checkpoint: null
 adapter_resume: false
 decoder_checkpoint: null
 decoder_resume: false
+checkpoint_bucket: null
+
+# Prompt template
+prompt_template: original.yaml
 
 wandb_project: voice_lab
-
-

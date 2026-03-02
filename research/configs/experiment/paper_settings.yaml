@@ -1,0 +1,12 @@
+# @package _global_
+# Paper settings from LLaMA-Omni
+# Training takes ~65 hours on 4x NVIDIA L40 GPUs
+
+batch_size: 8
+warmup_ratio: 0.03
+
+encoder_num_epochs: 3
+encoder_learning_rate: 2e-5
+
+decoder_num_epochs: 3
+decoder_learning_rate: 2e-4

@@ -4,6 +4,7 @@ Runs phases sequentially based on config.
 """
 
 import os
+import shutil
 import random
 from datetime import datetime
 import numpy as np
@@ -59,6 +60,14 @@ def compute_ctc_loss(logits, unit_ids, unit_lengths):
     )
 
 
+def sync_checkpoint(local_path: str, checkpoint_bucket: str, rel_key: str):
+    """Copy checkpoint to the mounted storage path (cloud-agnostic via SkyPilot mount)."""
+    dest = os.path.join(checkpoint_bucket, rel_key)
+    os.makedirs(os.path.dirname(dest), exist_ok=True)
+    shutil.copy2(local_path, dest)
+    print(f"Synced {local_path} -> {dest}")
+
+
 def train_encoder(
     cfg,
     device,
@@ -87,6 +96,7 @@ def train_encoder(
 
     train_dataloader, val_dataloader = get_dataloaders(
         tokenizer=tokenizer,
+        data_dir=cfg.data_dir,
         batch_size=cfg.batch_size,
         val_ratio=cfg.val_ratio,
         seed=cfg.seed,
@@ -205,10 +215,16 @@ def train_encoder(
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            torch.save(checkpoint_data, os.path.join(encoder_dir, "best_adapter.pt"))
+            best_path = os.path.join(encoder_dir, "best_adapter.pt")
+            torch.save(checkpoint_data, best_path)
             print(f"Saved best adapter with val loss: {val_loss:.4f}")
+            if cfg.checkpoint_bucket:
+                sync_checkpoint(best_path, cfg.checkpoint_bucket, f"{os.path.basename(checkpoint_dir)}/encoder/best_adapter.pt")
 
-        torch.save(checkpoint_data, os.path.join(encoder_dir, "last_adapter.pt"))
+        last_path = os.path.join(encoder_dir, "last_adapter.pt")
+        torch.save(checkpoint_data, last_path)
+        if cfg.checkpoint_bucket:
+            sync_checkpoint(last_path, cfg.checkpoint_bucket, f"{os.path.basename(checkpoint_dir)}/encoder/last_adapter.pt")
 
     del model
     torch.cuda.empty_cache()
@@ -254,6 +270,7 @@ def train_decoder(
 
     train_dataloader, val_dataloader = get_dataloaders(
         tokenizer=tokenizer,
+        data_dir=cfg.data_dir,
         batch_size=cfg.batch_size,
         val_ratio=cfg.val_ratio,
         seed=cfg.seed,
@@ -365,13 +382,19 @@ def train_decoder(
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
-            torch.save(checkpoint_data, os.path.join(decoder_dir, "best_decoder.pt"))
+            best_path = os.path.join(decoder_dir, "best_decoder.pt")
+            torch.save(checkpoint_data, best_path)
             print(f"Saved best decoder with val loss: {val_loss:.4f}")
+            if cfg.checkpoint_bucket:
+                sync_checkpoint(best_path, cfg.checkpoint_bucket, f"{os.path.basename(checkpoint_dir)}/decoder/best_decoder.pt")
 
-        torch.save(checkpoint_data, os.path.join(decoder_dir, "last_decoder.pt"))
+        last_path = os.path.join(decoder_dir, "last_decoder.pt")
+        torch.save(checkpoint_data, last_path)
+        if cfg.checkpoint_bucket:
+            sync_checkpoint(last_path, cfg.checkpoint_bucket, f"{os.path.basename(checkpoint_dir)}/decoder/last_decoder.pt")
 
 
-@hydra.main(version_base=None, config_path="configs", config_name="train_config")
+@hydra.main(version_base=None, config_path="configs", config_name="config")
 def main(cfg: DictConfig):
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
     set_seed(cfg.seed)
@@ -381,7 +404,7 @@ def main(cfg: DictConfig):
 
     run_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     checkpoint_dir = os.path.join(original_cwd, "checkpoints", run_timestamp)
-    template_path = os.path.join(original_cwd, "prompt_templates/original.yaml")
+    template_path = os.path.join(original_cwd, "prompt_templates", cfg.prompt_template)
 
     os.makedirs(checkpoint_dir, exist_ok=True)
     print(f"Checkpoints will be saved to: {checkpoint_dir}")
