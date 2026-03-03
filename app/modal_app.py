@@ -1,0 +1,68 @@
+"""
+Modal application — defines GPU workers and serves the FastAPI app.
+
+Deploy: modal deploy app/modal_app.py
+Dev:    modal serve app/modal_app.py
+"""
+
+import modal
+
+app = modal.App("voicelab")
+
+image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .pip_install(
+        "torch", "transformers", "librosa", "soundfile", "numpy",
+        "qwen-tts", "joblib", "huggingface_hub",
+        "datasets", "pyarrow",
+        "fastapi", "uvicorn", "pydantic-settings", "python-multipart",
+    )
+    .add_local_dir("app", remote_path="/root/app")
+)
+
+data_volume = modal.Volume.from_name("voicelab-data", create_if_missing=True)
+
+
+@app.cls(
+    image=image,
+    gpu="A10G",
+    volumes={"/data": data_volume},
+    timeout=3600,
+)
+class PipelineWorker:
+    @modal.enter()
+    def load(self):
+        from app.tts import TTS
+        from app.units import UnitExtractor
+
+        self.tts = TTS()
+        self.extractor = UnitExtractor()
+
+    @modal.method()
+    def run(self, dataset_name: str, output_dir: str, assistant_speaker: str | None = None):
+        from app.config import settings
+        from app.tts import Voice
+        from app.pipeline import run_pipeline
+
+        speaker = assistant_speaker or settings.assistant_speaker
+        voice = Voice(speaker=speaker, language=settings.assistant_language)
+
+        run_pipeline(
+            dataset_name=dataset_name,
+            tts=self.tts,
+            extractor=self.extractor,
+            output_dir=output_dir,
+            assistant_voice=voice,
+            chunk_size=settings.pipeline_chunk_size,
+        )
+        data_volume.commit()
+
+
+@app.function(image=image)
+@modal.asgi_app()
+def web():
+    from app.api.main import create_app
+
+    fastapi_app = create_app()
+    fastapi_app.state.pipeline_worker = PipelineWorker()
+    return fastapi_app

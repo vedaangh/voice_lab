@@ -1,9 +1,24 @@
-accelerate==1.11.0
-transformers==4.57.1
+# shared
+accelerate==1.12.0
+transformers==4.57.3
 datasets
 librosa
 soundfile
+torch
+numpy
+joblib
+huggingface_hub
+
+# research
 torchcodec
 hydra-core
 omegaconf
 wandb
+
+# app
+qwen-tts
+fastapi
+uvicorn[standard]
+pydantic-settings
+python-multipart
+modal
