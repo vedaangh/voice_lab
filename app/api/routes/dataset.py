@@ -1,10 +1,12 @@
 """Dataset generation endpoints."""
 
 import uuid
+from pathlib import Path
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 
 from app.api.schemas import DatasetGenerateRequest, JobResponse, JobStatusResponse
+from app.config import settings
 
 router = APIRouter(prefix="/dataset", tags=["dataset"])
 
@@ -13,12 +15,16 @@ _jobs: dict[str, object] = {}
 
 @router.post("/generate", response_model=JobResponse)
 def generate_dataset(req: DatasetGenerateRequest, request: Request):
+    if not req.input_path.endswith(".jsonl"):
+        raise HTTPException(status_code=400, detail="input_path must be a .jsonl file")
+
+    input_path = str(Path(settings.data_volume_path) / "input" / req.input_path)
     job_id = uuid.uuid4().hex[:12]
-    output_dir = f"/data/datasets/{job_id}"
+    output_dir = str(Path(settings.data_volume_path) / "output" / job_id)
 
     worker = request.app.state.pipeline_worker
     call = worker.run.spawn(
-        dataset_name=req.dataset_name,
+        input_path=input_path,
         output_dir=output_dir,
         assistant_speaker=req.assistant_speaker,
     )

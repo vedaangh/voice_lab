@@ -11,10 +11,11 @@ class Settings(BaseSettings):
 
     # Pipeline
     pipeline_chunk_size: int = 64
+    tts_sub_batch_size: int = 32
+    unit_sub_batch_size: int = 32
 
     # Modal volumes
     data_volume_path: str = "/data"
-    checkpoints_volume_path: str = "/checkpoints"
 
     # API
     api_host: str = "0.0.0.0"

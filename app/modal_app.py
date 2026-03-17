@@ -39,7 +39,7 @@ class PipelineWorker:
         self.extractor = UnitExtractor()
 
     @modal.method()
-    def run(self, dataset_name: str, output_dir: str, assistant_speaker: str | None = None):
+    def run(self, input_path: str, output_dir: str, assistant_speaker: str | None = None):
         from app.config import settings
         from app.tts import Voice
         from app.pipeline import run_pipeline
@@ -47,13 +47,17 @@ class PipelineWorker:
         speaker = assistant_speaker or settings.assistant_speaker
         voice = Voice(speaker=speaker, language=settings.assistant_language)
 
+        data_volume.reload()
+
         run_pipeline(
-            dataset_name=dataset_name,
+            input_path=input_path,
             tts=self.tts,
             extractor=self.extractor,
             output_dir=output_dir,
             assistant_voice=voice,
             chunk_size=settings.pipeline_chunk_size,
+            tts_sub_batch_size=settings.tts_sub_batch_size,
+            unit_sub_batch_size=settings.unit_sub_batch_size,
         )
         data_volume.commit()
 
