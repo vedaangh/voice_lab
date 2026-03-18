@@ -22,3 +22,7 @@ uvicorn[standard]
 pydantic-settings
 python-multipart
 modal
+
+# test
+pytest>=8.0
+httpx

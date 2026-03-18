@@ -11,11 +11,13 @@ app = modal.App("voicelab")
 
 image = (
     modal.Image.debian_slim(python_version="3.12")
+    .apt_install("ffmpeg", "sox")
     .pip_install(
         "torch", "transformers", "librosa", "soundfile", "numpy",
         "qwen-tts", "joblib", "huggingface_hub",
-        "datasets", "pyarrow",
+        "datasets", "pyarrow", "torchcodec",
         "fastapi", "uvicorn", "pydantic-settings", "python-multipart",
+        "flash-attn",
     )
     .add_local_dir("app", remote_path="/root/app")
 )

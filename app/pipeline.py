@@ -12,8 +12,14 @@ Supports resume: existing shards are skipped on restart.
 
 import json
 import logging
-from itertools import batched
+from itertools import islice
 from pathlib import Path
+
+
+def batched(iterable, n):
+    it = iter(iterable)
+    while batch := tuple(islice(it, n)):
+        yield batch
 
 import numpy as np
 import pyarrow.parquet as pq
