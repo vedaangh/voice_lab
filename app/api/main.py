@@ -2,7 +2,7 @@
 
 from fastapi import FastAPI
 
-from app.api.routes import health, voices, dataset
+from app.api.routes import health, voices, dataset, training
 
 
 def create_app() -> FastAPI:
@@ -10,4 +10,5 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(voices.router)
     app.include_router(dataset.router)
+    app.include_router(training.router)
     return app

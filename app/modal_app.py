@@ -9,7 +9,11 @@ import modal
 
 app = modal.App("voicelab")
 
-image = (
+# ---------------------------------------------------------------------------
+# Images
+# ---------------------------------------------------------------------------
+
+pipeline_image = (
     modal.Image.debian_slim(python_version="3.12")
     .apt_install("ffmpeg", "sox")
     .pip_install(
@@ -17,16 +21,31 @@ image = (
         "qwen-tts", "joblib", "huggingface_hub",
         "datasets", "pyarrow", "torchcodec",
         "fastapi", "uvicorn", "pydantic-settings", "python-multipart",
-        "flash-attn",
     )
     .add_local_dir("app", remote_path="/root/app")
 )
 
+training_image = (
+    modal.Image.debian_slim(python_version="3.12")
+    .apt_install("ffmpeg")
+    .pip_install(
+        "torch", "transformers", "datasets", "pyarrow", "numpy",
+        "soundfile", "torchcodec", "wandb", "pydantic", "pydantic-settings",
+        "accelerate",
+    )
+    .add_local_dir("app", remote_path="/root/app")
+)
+
+# ---------------------------------------------------------------------------
+# Volumes
+# ---------------------------------------------------------------------------
+
 data_volume = modal.Volume.from_name("voicelab-data", create_if_missing=True)
+checkpoints_volume = modal.Volume.from_name("voicelab-checkpoints", create_if_missing=True)
 
 
 @app.cls(
-    image=image,
+    image=pipeline_image,
     gpu="A10G",
     volumes={"/data": data_volume},
     timeout=3600,
@@ -64,11 +83,35 @@ class PipelineWorker:
         data_volume.commit()
 
 
-@app.function(image=image)
+@app.cls(
+    image=training_image,
+    gpu="H100",
+    volumes={"/data": data_volume, "/checkpoints": checkpoints_volume},
+    timeout=86400,
+    # wandb-secret is optional — create it in Modal dashboard to enable logging
+)
+class TrainingWorker:
+    @modal.method()
+    def run(self, config_json: str):
+        import json
+        from app.training.config import TrainingConfig
+        from app.training.trainer import run_training
+
+        data_volume.reload()
+
+        config = TrainingConfig(**json.loads(config_json))
+        result = run_training(config)
+
+        checkpoints_volume.commit()
+        return result
+
+
+@app.function(image=pipeline_image)
 @modal.asgi_app()
 def web():
     from app.api.main import create_app
 
     fastapi_app = create_app()
     fastapi_app.state.pipeline_worker = PipelineWorker()
+    fastapi_app.state.training_worker = TrainingWorker()
     return fastapi_app

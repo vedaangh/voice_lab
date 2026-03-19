@@ -16,6 +16,7 @@ class Settings(BaseSettings):
 
     # Modal volumes
     data_volume_path: str = "/data"
+    checkpoints_volume_path: str = "/checkpoints"
 
     # API
     api_host: str = "0.0.0.0"

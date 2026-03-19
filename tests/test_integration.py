@@ -11,7 +11,7 @@ Tests the full stack:
 import json
 from pathlib import Path
 
-from app.modal_app import app, image, data_volume, PipelineWorker
+from app.modal_app import app, pipeline_image, data_volume, PipelineWorker
 
 TEST_INPUT_PATH = "/data/input/test_integration.jsonl"
 TEST_OUTPUT_DIR = "/data/output/test_integration"
@@ -25,7 +25,7 @@ NUM_SPEAKERS = 9
 EXPECTED_TOTAL = len(TEST_ROWS) * NUM_SPEAKERS
 
 
-@app.function(image=image, volumes={"/data": data_volume}, timeout=120)
+@app.function(image=pipeline_image, volumes={"/data": data_volume}, timeout=120)
 def setup_test_input():
     """Write test JSONL to the Modal volume."""
     p = Path(TEST_INPUT_PATH)
@@ -34,7 +34,7 @@ def setup_test_input():
     data_volume.commit()
 
 
-@app.function(image=image, volumes={"/data": data_volume}, timeout=120)
+@app.function(image=pipeline_image, volumes={"/data": data_volume}, timeout=120)
 def verify_and_cleanup():
     """Read pipeline output, run assertions, clean up, return results."""
     import shutil
