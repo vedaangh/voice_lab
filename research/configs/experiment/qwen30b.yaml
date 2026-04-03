@@ -1,0 +1,18 @@
+# @package _global_
+# Qwen3-30B-A3B training — requires multi-GPU or 8-bit quantisation
+
+llm_name: Qwen/Qwen3-30B-A3B-Instruct-2507
+
+# Shard the frozen 30B LLM across available GPUs
+use_device_map: true
+load_in_8bit: true
+
+# Smaller batch to fit in memory; compensate with gradient accumulation
+batch_size: 2
+gradient_accumulation_steps: 4
+
+encoder_num_epochs: 3
+encoder_learning_rate: 2e-5
+
+decoder_num_epochs: 5
+decoder_learning_rate: 2e-4

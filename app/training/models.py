@@ -90,6 +90,8 @@ class SpeechToTextModel(nn.Module):
         qwen_model_name="Qwen/Qwen3-4B-Instruct-2507",
         adapter_hidden_dim=2048,
         adapter_ds_rate=5,
+        device_map=None,
+        load_in_8bit=False,
     ):
         super().__init__()
 
@@ -102,7 +104,14 @@ class SpeechToTextModel(nn.Module):
         for param in self.whisper_encoder.parameters():
             param.requires_grad = False
 
-        self.llm = AutoModelForCausalLM.from_pretrained(qwen_model_name)
+        llm_kwargs = {}
+        if device_map is not None:
+            llm_kwargs["device_map"] = device_map
+        if load_in_8bit:
+            llm_kwargs["load_in_8bit"] = True
+            llm_kwargs["torch_dtype"] = torch.bfloat16
+
+        self.llm = AutoModelForCausalLM.from_pretrained(qwen_model_name, **llm_kwargs)
         qwen_dim = self.llm.config.hidden_size
 
         self.adapter = Adapter(
@@ -115,21 +124,17 @@ class SpeechToTextModel(nn.Module):
         for param in self.llm.parameters():
             param.requires_grad = False
 
-        self.hidden_states = None
-
     def forward(self, inputs_embeds, attention_mask=None, labels=None):
         """
         Forward pass through Qwen with pre-constructed embeddings.
-        After forward, self.hidden_states contains Qwen's last hidden state.
+        Returns the full CausalLMOutput (use outputs.hidden_states[-1] for last hidden state).
         """
-        outputs = self.llm(
+        return self.llm(
             inputs_embeds=inputs_embeds,
             attention_mask=attention_mask,
             labels=labels,
             output_hidden_states=True,
         )
-        self.hidden_states = outputs.hidden_states[-1]
-        return outputs
 
 
 class SpeechToSpeechModel(nn.Module):
@@ -151,6 +156,8 @@ class SpeechToSpeechModel(nn.Module):
         decoder_num_layers: int = 12,
         decoder_intermediate_dim: int = 4096,
         decoder_upsample_rate: int = 25,
+        device_map=None,
+        load_in_8bit=False,
     ):
         super().__init__()
 
@@ -159,6 +166,8 @@ class SpeechToSpeechModel(nn.Module):
             qwen_model_name=qwen_model_name,
             adapter_hidden_dim=adapter_hidden_dim,
             adapter_ds_rate=adapter_ds_rate,
+            device_map=device_map,
+            load_in_8bit=load_in_8bit,
         )
 
         checkpoint = torch.load(adapter_checkpoint_path, map_location="cpu")
@@ -185,8 +194,8 @@ class SpeechToSpeechModel(nn.Module):
             Unit logits [batch, T, NUM_UNITS + 1] where T = response_len * upsample_rate
         """
         with torch.no_grad():
-            self.speech_text_model(inputs_embeds=inputs_embeds)
-            hidden_states = self.speech_text_model.hidden_states.float()
+            outputs = self.speech_text_model(inputs_embeds=inputs_embeds)
+            hidden_states = outputs.hidden_states[-1].float()
 
         response_hidden = hidden_states[:, response_start:, :]
         return self.speech_decoder(response_hidden)

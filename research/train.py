@@ -1,9 +1,14 @@
 """
 Unified training script for encoder (adapter) and decoder (speech decoder + unit head).
 Runs phases sequentially based on config.
+
+Single-GPU:   python train.py
+Multi-GPU:    python train.py use_device_map=true   (shards frozen LLM across GPUs)
+Quantised:    python train.py load_in_8bit=true      (halves frozen LLM memory)
 """
 
 import os
+import math
 import shutil
 import random
 from datetime import datetime
@@ -68,14 +73,59 @@ def sync_checkpoint(local_path: str, checkpoint_bucket: str, rel_key: str):
     print(f"Synced {local_path} -> {dest}")
 
 
+def _needs_manual_placement(cfg) -> bool:
+    """True when we should call .to(device) on the model ourselves."""
+    return not cfg.use_device_map and not cfg.load_in_8bit
+
+
+def _place_model(model, cfg, device):
+    """
+    Place a SpeechToTextModel (or SpeechToSpeechModel) on the correct device(s).
+
+    - Standard:   whole model → single device in MODEL_DTYPE.
+    - device_map: LLM already placed by HF; move whisper + adapter to primary GPU.
+    - 8bit:       LLM already placed by bitsandbytes; move whisper + adapter.
+    """
+    if _needs_manual_placement(cfg):
+        model = model.to(dtype=MODEL_DTYPE, device=device)
+    else:
+        # LLM is already on GPU(s). Move the remaining components.
+        stm = model if isinstance(model, SpeechToTextModel) else model.speech_text_model
+        stm.whisper_encoder = stm.whisper_encoder.to(dtype=MODEL_DTYPE, device=device)
+        stm.adapter = stm.adapter.to(dtype=MODEL_DTYPE, device=device)
+        if isinstance(model, SpeechToSpeechModel):
+            model.speech_decoder = model.speech_decoder.to(dtype=torch.float32, device=device)
+    return model
+
+
+def _get_template_embeds(model, template_path, tokenizer, device):
+    """Extract template embeddings from a (possibly sharded) model."""
+    if isinstance(model, SpeechToSpeechModel):
+        embed_layer = model.speech_text_model.llm.get_input_embeddings()
+    else:
+        embed_layer = model.llm.get_input_embeddings()
+    embed_device = next(embed_layer.parameters()).device
+    before_embeds, after_embeds, before_len, after_len = prepare_template_embeddings(
+        template_path, tokenizer, embed_layer, embed_device
+    )
+    return (
+        before_embeds.to(device=device, dtype=MODEL_DTYPE),
+        after_embeds.to(device=device, dtype=MODEL_DTYPE),
+        before_len,
+        after_len,
+    )
+
+
+def _is_accumulation_step(step: int, total_steps: int, accum_steps: int) -> bool:
+    """True when we should run optimizer.step()."""
+    return (step + 1) % accum_steps == 0 or (step + 1) == total_steps
+
+
 def train_encoder(
     cfg,
     device,
     tokenizer,
-    before_embeds,
-    after_embeds,
-    before_len,
-    after_len,
+    template_path,
     checkpoint_dir,
 ):
     """Train the adapter (encoder phase)."""
@@ -88,9 +138,15 @@ def train_encoder(
         qwen_model_name=cfg.llm_name,
         adapter_hidden_dim=cfg.adapter_hidden_dim,
         adapter_ds_rate=cfg.adapter_ds_rate,
-    ).to(dtype=MODEL_DTYPE, device=device)
-
+        device_map="auto" if cfg.use_device_map else None,
+        load_in_8bit=cfg.load_in_8bit,
+    )
+    model = _place_model(model, cfg, device)
     model.llm.config.use_cache = False
+
+    before_embeds, after_embeds, before_len, after_len = _get_template_embeds(
+        model, template_path, tokenizer, device
+    )
 
     optimizer = AdamW(model.adapter.parameters(), lr=cfg.encoder_learning_rate)
 
@@ -103,7 +159,9 @@ def train_encoder(
         max_answer_tokens=cfg.max_answer_tokens,
     )
 
-    num_training_steps = len(train_dataloader) * cfg.encoder_num_epochs
+    accum = cfg.gradient_accumulation_steps
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / accum)
+    num_training_steps = num_update_steps_per_epoch * cfg.encoder_num_epochs
     num_warmup_steps = max(1, int(num_training_steps * cfg.warmup_ratio))
     scheduler = get_cosine_schedule_with_warmup(
         optimizer,
@@ -133,8 +191,9 @@ def train_encoder(
         model.eval()
         model.adapter.train()
         total_train_loss = 0
+        num_batches = len(train_dataloader)
 
-        for batch in tqdm(train_dataloader, desc="Training"):
+        for step, batch in enumerate(tqdm(train_dataloader, desc="Training")):
             inputs = prepare_batch(
                 batch,
                 model,
@@ -153,17 +212,20 @@ def train_encoder(
                 labels=inputs["labels"],
             )
 
-            loss = outputs.loss
-
-            optimizer.zero_grad()
+            loss = outputs.loss / accum
             loss.backward()
-            torch.nn.utils.clip_grad_norm_(model.adapter.parameters(), max_norm=cfg.gradient_clip)
-            optimizer.step()
-            scheduler.step()
 
-            total_train_loss += loss.item()
+            total_train_loss += outputs.loss.detach().item()
 
-        train_loss = total_train_loss / len(train_dataloader)
+            if _is_accumulation_step(step, num_batches, accum):
+                torch.nn.utils.clip_grad_norm_(
+                    model.adapter.parameters(), max_norm=cfg.gradient_clip
+                )
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
+
+        train_loss = total_train_loss / num_batches
 
         model.eval()
         total_val_loss = 0
@@ -236,10 +298,7 @@ def train_decoder(
     cfg,
     device,
     tokenizer,
-    before_embeds,
-    after_embeds,
-    before_len,
-    after_len,
+    template_path,
     checkpoint_dir,
     adapter_path,
 ):
@@ -259,11 +318,22 @@ def train_decoder(
         decoder_num_layers=cfg.decoder_num_layers,
         decoder_intermediate_dim=cfg.decoder_intermediate_dim,
         decoder_upsample_rate=cfg.decoder_upsample_rate,
-    ).to(device)
-    model.speech_text_model.to(dtype=MODEL_DTYPE)
-    model.speech_decoder.to(dtype=torch.float32)
+        device_map="auto" if cfg.use_device_map else None,
+        load_in_8bit=cfg.load_in_8bit,
+    )
+
+    if _needs_manual_placement(cfg):
+        model.to(device)
+        model.speech_text_model.to(dtype=MODEL_DTYPE)
+        model.speech_decoder.to(dtype=torch.float32)
+    else:
+        model = _place_model(model, cfg, device)
 
     model.speech_text_model.llm.config.use_cache = False
+
+    before_embeds, after_embeds, before_len, after_len = _get_template_embeds(
+        model, template_path, tokenizer, device
+    )
 
     trainable_params = list(model.speech_decoder.parameters())
     optimizer = AdamW(trainable_params, lr=cfg.decoder_learning_rate)
@@ -278,7 +348,9 @@ def train_decoder(
         max_answer_tokens=cfg.max_answer_tokens,
     )
 
-    num_training_steps = len(train_dataloader) * cfg.decoder_num_epochs
+    accum = cfg.gradient_accumulation_steps
+    num_update_steps_per_epoch = math.ceil(len(train_dataloader) / accum)
+    num_training_steps = num_update_steps_per_epoch * cfg.decoder_num_epochs
     num_warmup_steps = max(1, int(num_training_steps * cfg.warmup_ratio))
     scheduler = get_cosine_schedule_with_warmup(
         optimizer,
@@ -310,8 +382,9 @@ def train_decoder(
             param.requires_grad = False
 
         total_train_loss = 0
+        num_batches = len(train_dataloader)
 
-        for batch in tqdm(train_dataloader, desc="Training"):
+        for step, batch in enumerate(tqdm(train_dataloader, desc="Training")):
             inputs = prepare_batch(
                 batch,
                 model.speech_text_model,
@@ -326,16 +399,18 @@ def train_decoder(
 
             logits = model(inputs["inputs_embeds"], response_start=inputs["prompt_len"])
             loss = compute_ctc_loss(logits.float(), batch["unit_ids"], batch["unit_lengths"])
+            scaled_loss = loss / accum
+            scaled_loss.backward()
 
-            optimizer.zero_grad()
-            loss.backward()
-            torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=cfg.gradient_clip)
-            optimizer.step()
-            scheduler.step()
+            total_train_loss += loss.detach().item()
 
-            total_train_loss += loss.item()
+            if _is_accumulation_step(step, num_batches, accum):
+                torch.nn.utils.clip_grad_norm_(trainable_params, max_norm=cfg.gradient_clip)
+                optimizer.step()
+                scheduler.step()
+                optimizer.zero_grad()
 
-        train_loss = total_train_loss / len(train_dataloader)
+        train_loss = total_train_loss / num_batches
 
         model.eval()
         total_val_loss = 0
@@ -418,20 +493,6 @@ def main(cfg: DictConfig):
     print("Loading tokenizer...")
     tokenizer = AutoTokenizer.from_pretrained(cfg.llm_name)
 
-    print("Preparing template embeddings...")
-    temp_model = SpeechToTextModel(
-        whisper_model_name=cfg.whisper_name,
-        qwen_model_name=cfg.llm_name,
-        adapter_hidden_dim=cfg.adapter_hidden_dim,
-        adapter_ds_rate=cfg.adapter_ds_rate,
-    ).to(device)
-    embed_layer = temp_model.llm.get_input_embeddings()
-    before_embeds, after_embeds, before_len, after_len = prepare_template_embeddings(
-        template_path=template_path, tokenizer=tokenizer, embed_layer=embed_layer, device=device
-    )
-    del temp_model
-    torch.cuda.empty_cache()
-
     adapter_path = None
 
     if cfg.train_encoder:
@@ -445,10 +506,7 @@ def main(cfg: DictConfig):
                 cfg,
                 device,
                 tokenizer,
-                before_embeds,
-                after_embeds,
-                before_len,
-                after_len,
+                template_path,
                 checkpoint_dir,
             )
     elif cfg.adapter_checkpoint:
@@ -466,10 +524,7 @@ def main(cfg: DictConfig):
             cfg,
             device,
             tokenizer,
-            before_embeds,
-            after_embeds,
-            before_len,
-            after_len,
+            template_path,
             checkpoint_dir,
             adapter_path,
         )

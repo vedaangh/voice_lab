@@ -1,4 +1,6 @@
 resources:
+  # Qwen3-4B:  H100:1 is sufficient
+  # Qwen3-30B: H100:2 + use_device_map=true + load_in_8bit=true
   accelerators: H100:1
   use_spot: true
   disk_size: 256

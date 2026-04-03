@@ -16,6 +16,7 @@ decoder_upsample_rate: 25
 
 # Training - shared
 batch_size: 4
+gradient_accumulation_steps: 1
 warmup_ratio: 0.05
 gradient_clip: 1.0
 val_ratio: 0.01
@@ -37,6 +38,10 @@ adapter_resume: false
 decoder_checkpoint: null
 decoder_resume: false
 checkpoint_bucket: null
+
+# Multi-GPU / quantisation
+use_device_map: false
+load_in_8bit: false
 
 # Prompt template
 prompt_template: original.yaml

@@ -256,8 +256,8 @@ def run_inference(
     full_embeds = torch.cat([inputs_embeds, response_embeds], dim=1)
 
     with torch.no_grad():
-        model.speech_text_model(inputs_embeds=full_embeds)
-        hidden_states = model.speech_text_model.hidden_states
+        outputs = model.speech_text_model(inputs_embeds=full_embeds)
+        hidden_states = outputs.hidden_states[-1]
 
     response_hidden = hidden_states[:, prompt_length:, :]
 
