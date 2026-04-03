@@ -39,6 +39,11 @@ decoder_checkpoint: null
 decoder_resume: false
 checkpoint_bucket: null
 
+# ASR eval during decoder training (0 = disabled)
+eval_samples_per_epoch: 5
+vocoder_checkpoint: vocoder/g_00500000
+vocoder_config: vocoder/config.json
+
 # Multi-GPU / quantisation
 use_device_map: false
 load_in_8bit: false

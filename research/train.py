@@ -22,12 +22,13 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 import wandb
 
-from transformers import AutoTokenizer, get_cosine_schedule_with_warmup
+from transformers import AutoTokenizer, WhisperProcessor, WhisperForConditionalGeneration, get_cosine_schedule_with_warmup
 
 from model import SpeechToTextModel, SpeechToSpeechModel, BLANK_IDX
 from data_loader import get_dataloaders
 from config import MODEL_DTYPE
-from utils import prepare_template_embeddings, prepare_batch
+from utils import prepare_template_embeddings, prepare_batch, encode_speech
+from inference import ctc_postprocess, load_vocoder
 
 
 def set_seed(seed: int):
@@ -119,6 +120,117 @@ def _get_template_embeds(model, template_path, tokenizer, device):
 def _is_accumulation_step(step: int, total_steps: int, accum_steps: int) -> bool:
     """True when we should run optimizer.step()."""
     return (step + 1) % accum_steps == 0 or (step + 1) == total_steps
+
+
+def _run_asr_eval(
+    model,
+    val_dataset,
+    vocoder,
+    whisper_asr,
+    whisper_processor,
+    tokenizer,
+    before_embeds,
+    after_embeds,
+    device,
+    epoch,
+    num_samples=5,
+):
+    """
+    Run full inference on a few val samples, transcribe with Whisper ASR,
+    and print ground-truth vs generated speech transcription.
+    """
+    model.eval()
+    model.speech_text_model.llm.config.use_cache = True
+
+    embed_layer = model.speech_text_model.llm.get_input_embeddings()
+    embed_device = next(embed_layer.parameters()).device
+
+    print(f"\n=== ASR Eval (Epoch {epoch + 1}) ===")
+    eval_rows = []
+
+    indices = list(range(min(num_samples, len(val_dataset))))
+    for idx in indices:
+        sample = val_dataset[idx]
+
+        # 1. Encode question audio through Whisper + adapter
+        audio = sample["question_audio"]["array"]
+        audio = np.pad(audio, (0, max(0, 480_000 - len(audio))))[:480_000]
+        whisper_inputs = whisper_processor(
+            audio, sampling_rate=16_000, return_tensors="pt"
+        )
+        audio_features = whisper_inputs.input_features.to(device=device, dtype=MODEL_DTYPE)
+
+        with torch.no_grad():
+            speech_embeds = encode_speech(model.speech_text_model, audio_features, MODEL_DTYPE)
+
+        # 2. Build prompt and generate text
+        inputs_embeds = torch.cat([
+            before_embeds.unsqueeze(0),
+            speech_embeds,
+            after_embeds.unsqueeze(0),
+        ], dim=1)
+        prompt_length = inputs_embeds.shape[1]
+
+        with torch.no_grad():
+            output_ids = model.speech_text_model.llm.generate(
+                inputs_embeds=inputs_embeds,
+                max_new_tokens=128,
+                do_sample=False,
+                pad_token_id=tokenizer.pad_token_id,
+            )
+        generated_ids = output_ids.sequences[0] if hasattr(output_ids, "sequences") else output_ids[0]
+        llm_text = tokenizer.decode(generated_ids, skip_special_tokens=True)
+
+        # 3. Get hidden states for decoder
+        response_embeds = embed_layer(generated_ids).unsqueeze(0).to(device=device, dtype=MODEL_DTYPE)
+        full_embeds = torch.cat([inputs_embeds, response_embeds], dim=1)
+
+        with torch.no_grad():
+            model.speech_text_model(inputs_embeds=full_embeds)
+            hidden_states = model.speech_text_model.hidden_states.float()
+        response_hidden = hidden_states[:, prompt_length:, :]
+
+        # 4. Speech decoder → CTC → units
+        decoder_device = next(model.speech_decoder.parameters()).device
+        with torch.no_grad():
+            unit_logits = model.speech_decoder(response_hidden.to(decoder_device))
+        unit_ids = unit_logits.argmax(dim=-1)
+        units = ctc_postprocess(unit_ids, blank=BLANK_IDX)
+
+        # 5. Vocoder → waveform
+        if len(units) == 0:
+            asr_text = "<no units produced>"
+        else:
+            unit_tensor = torch.LongTensor(units).unsqueeze(0).to(device)
+            with torch.no_grad():
+                waveform = vocoder(unit_tensor, dur_prediction=True).cpu().numpy()
+
+            # 6. Whisper ASR transcription (on CPU to save GPU memory)
+            asr_inputs = whisper_processor(
+                waveform, sampling_rate=16_000, return_tensors="pt"
+            )
+            asr_features = asr_inputs.input_features.to(whisper_asr.device)
+            with torch.no_grad():
+                asr_ids = whisper_asr.generate(asr_features, max_new_tokens=128)
+            asr_text = whisper_processor.batch_decode(asr_ids, skip_special_tokens=True)[0]
+
+        ground_truth = sample["answer"]
+        print(f"[{idx + 1}] Ground truth: \"{ground_truth}\"")
+        print(f"     LLM text:     \"{llm_text}\"")
+        print(f"     ASR of speech: \"{asr_text}\"")
+        print(f"     Units: {len(units)} (post-CTC)")
+
+        eval_rows.append([epoch + 1, idx, ground_truth, llm_text, asr_text, len(units)])
+
+    # Log to wandb as a table
+    table = wandb.Table(
+        columns=["epoch", "sample", "ground_truth", "llm_text", "asr_text", "num_units"],
+        data=eval_rows,
+    )
+    wandb.log({"decoder/eval_table": table})
+
+    model.speech_text_model.llm.config.use_cache = False
+    print("=" * 50)
 
 
 def train_encoder(
@@ -374,6 +486,30 @@ def train_decoder(
     decoder_dir = os.path.join(checkpoint_dir, "decoder")
     os.makedirs(decoder_dir, exist_ok=True)
 
+    # Load eval components (vocoder on GPU, Whisper ASR on CPU)
+    vocoder, whisper_asr, eval_whisper_processor = None, None, None
+    eval_samples = getattr(cfg, "eval_samples_per_epoch", 0)
+    if eval_samples > 0:
+        original_cwd = hydra.utils.get_original_cwd()
+        voc_ckpt = os.path.join(original_cwd, cfg.vocoder_checkpoint)
+        voc_cfg = os.path.join(original_cwd, cfg.vocoder_config)
+        if os.path.exists(voc_ckpt) and os.path.exists(voc_cfg):
+            print("Loading vocoder for ASR eval...")
+            vocoder = load_vocoder(voc_ckpt, voc_cfg, device)
+            print("Loading Whisper ASR model (CPU) for eval...")
+            whisper_asr = WhisperForConditionalGeneration.from_pretrained(
+                cfg.whisper_name
+            ).to("cpu")
+            whisper_asr.eval()
+            eval_whisper_processor = WhisperProcessor.from_pretrained(cfg.whisper_name)
+        else:
+            print(f"Warning: vocoder not found at {voc_ckpt}, skipping ASR eval. "
+                  f"Run: python scripts/download_vocoder.py")
+            eval_samples = 0
+
+    # Keep a reference to the raw val dataset for eval sampling
+    val_dataset = val_dataloader.dataset
+
     for epoch in range(start_epoch, cfg.decoder_num_epochs):
         print(f"\nDecoder Epoch {epoch + 1}/{cfg.decoder_num_epochs}")
 
@@ -446,6 +582,22 @@ def train_decoder(
                 "decoder/epoch": epoch,
             }
         )
+
+        # ASR eval: run full inference on a few val samples
+        if eval_samples > 0 and vocoder is not None:
+            _run_asr_eval(
+                model=model,
+                val_dataset=val_dataset,
+                vocoder=vocoder,
+                whisper_asr=whisper_asr,
+                whisper_processor=eval_whisper_processor,
+                tokenizer=tokenizer,
+                before_embeds=before_embeds,
+                after_embeds=after_embeds,
+                device=device,
+                epoch=epoch,
+                num_samples=eval_samples,
+            )
 
         checkpoint_data = {
             "epoch": epoch,
